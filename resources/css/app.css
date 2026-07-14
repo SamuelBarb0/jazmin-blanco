@@ -1,0 +1,384 @@
+@import 'tailwindcss';
+
+@plugin 'tailwindcss-animate';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+    --font-sans:
+        'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+    --font-serif: 'Instrument Serif', ui-serif, Georgia, serif;
+
+    --color-aurora-1: var(--aurora-1);
+    --color-aurora-2: var(--aurora-2);
+    --color-aurora-3: var(--aurora-3);
+
+    --radius-lg: var(--radius);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-sm: calc(var(--radius) - 4px);
+
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+
+    --color-chart-1: var(--chart-1);
+    --color-chart-2: var(--chart-2);
+    --color-chart-3: var(--chart-3);
+    --color-chart-4: var(--chart-4);
+    --color-chart-5: var(--chart-5);
+
+    --color-sidebar: var(--sidebar-background);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/*
+  The default border color has changed to `currentColor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+    *,
+    ::after,
+    ::before,
+    ::backdrop,
+    ::file-selector-button {
+        border-color: var(--color-gray-200, currentColor);
+    }
+}
+
+/*
+  Paleta "TRICELL" — consultorio estético Dra. Jazmin Blanco.
+  Limpio, corporativo y azul: contenido claro sobre un panel lateral
+  azul profundo con acentos cian.
+*/
+:root {
+    --background: hsl(208, 60%, 99%);
+    --foreground: hsl(215, 35%, 14%);
+    --card: hsl(0, 0%, 100%);
+    --card-foreground: hsl(215, 35%, 14%);
+    --popover: hsl(0, 0%, 100%);
+    --popover-foreground: hsl(215, 35%, 14%);
+    --primary: hsl(212, 92%, 45%);
+    --primary-foreground: hsl(0, 0%, 100%);
+    --secondary: hsl(210, 45%, 95%);
+    --secondary-foreground: hsl(215, 40%, 22%);
+    --muted: hsl(210, 40%, 96%);
+    --muted-foreground: hsl(215, 18%, 46%);
+    --accent: hsl(205, 70%, 94%);
+    --accent-foreground: hsl(213, 60%, 30%);
+    --destructive: hsl(0, 75%, 55%);
+    --destructive-foreground: hsl(0, 0%, 100%);
+    --border: hsl(214, 32%, 90%);
+    --input: hsl(214, 30%, 88%);
+    --ring: hsl(212, 92%, 45%);
+    --aurora-1: hsl(212, 92%, 55%);
+    --aurora-2: hsl(199, 89%, 58%);
+    --aurora-3: hsl(224, 80%, 62%);
+    --chart-1: hsl(212, 92%, 48%);
+    --chart-2: hsl(199, 89%, 52%);
+    --chart-3: hsl(187, 72%, 45%);
+    --chart-4: hsl(224, 76%, 58%);
+    --chart-5: hsl(172, 66%, 44%);
+    --radius: 0.65rem;
+    --sidebar-background: hsl(215, 48%, 12%);
+    --sidebar-foreground: hsl(210, 30%, 78%);
+    --sidebar-primary: hsl(199, 89%, 55%);
+    --sidebar-primary-foreground: hsl(215, 50%, 10%);
+    --sidebar-accent: hsl(215, 40%, 19%);
+    --sidebar-accent-foreground: hsl(205, 60%, 92%);
+    --sidebar-border: hsl(215, 35%, 20%);
+    --sidebar-ring: hsl(199, 89%, 55%);
+}
+
+.dark {
+    --background: hsl(215, 42%, 7%);
+    --foreground: hsl(210, 40%, 96%);
+    --card: hsl(215, 38%, 10%);
+    --card-foreground: hsl(210, 40%, 96%);
+    --popover: hsl(215, 38%, 10%);
+    --popover-foreground: hsl(210, 40%, 96%);
+    --primary: hsl(199, 89%, 55%);
+    --primary-foreground: hsl(215, 50%, 8%);
+    --secondary: hsl(215, 32%, 16%);
+    --secondary-foreground: hsl(210, 40%, 96%);
+    --muted: hsl(215, 32%, 14%);
+    --muted-foreground: hsl(213, 20%, 65%);
+    --accent: hsl(215, 35%, 18%);
+    --accent-foreground: hsl(205, 60%, 90%);
+    --destructive: hsl(0, 72%, 56%);
+    --destructive-foreground: hsl(0, 0%, 100%);
+    --border: hsl(215, 30%, 18%);
+    --input: hsl(215, 30%, 20%);
+    --ring: hsl(199, 89%, 55%);
+    --aurora-1: hsl(212, 90%, 55%);
+    --aurora-2: hsl(193, 95%, 56%);
+    --aurora-3: hsl(228, 85%, 65%);
+    --chart-1: hsl(199, 89%, 55%);
+    --chart-2: hsl(212, 92%, 60%);
+    --chart-3: hsl(187, 72%, 50%);
+    --chart-4: hsl(224, 76%, 65%);
+    --chart-5: hsl(172, 66%, 50%);
+    --sidebar-background: hsl(215, 50%, 9%);
+    --sidebar-foreground: hsl(210, 30%, 76%);
+    --sidebar-primary: hsl(199, 89%, 55%);
+    --sidebar-primary-foreground: hsl(215, 50%, 8%);
+    --sidebar-accent: hsl(215, 38%, 16%);
+    --sidebar-accent-foreground: hsl(205, 60%, 90%);
+    --sidebar-border: hsl(215, 35%, 16%);
+    --sidebar-ring: hsl(199, 89%, 55%);
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground;
+        font-feature-settings: 'ss01', 'cv01';
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ * Clinical Luxe — utilidades de diseño premium
+ * ------------------------------------------------------------------ */
+
+.font-display {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+}
+
+/* ── Liquid Glass — vidrio translúcido tintado con la paleta ───────── *
+ * El reflejo especular sigue al cursor vía las variables --mx / --my   *
+ * (por defecto se posa arriba, simulando luz cenital sobre el cristal).*/
+@property --mx {
+    syntax: '<percentage>';
+    inherits: false;
+    initial-value: 50%;
+}
+@property --my {
+    syntax: '<percentage>';
+    inherits: false;
+    initial-value: 0%;
+}
+
+.glass,
+.liquid-glass {
+    --mx: 50%;
+    --my: 0%;
+    position: relative;
+    isolation: isolate;
+    background-color: color-mix(in oklab, var(--primary) 7%, color-mix(in oklab, var(--card) 60%, transparent));
+    background-image:
+        radial-gradient(150px circle at var(--mx) var(--my), color-mix(in oklab, white 60%, transparent), transparent 45%),
+        radial-gradient(340px circle at var(--mx) var(--my), color-mix(in oklab, white 32%, transparent), transparent 62%),
+        linear-gradient(160deg, color-mix(in oklab, white 24%, transparent) 0%, transparent 46%);
+    backdrop-filter: blur(24px) saturate(190%) brightness(1.05);
+    -webkit-backdrop-filter: blur(24px) saturate(190%) brightness(1.05);
+    border: 1px solid color-mix(in oklab, white 30%, transparent);
+    box-shadow:
+        inset 0 1px 0 0 color-mix(in oklab, white 60%, transparent),
+        inset 0 0 0 1px color-mix(in oklab, white 8%, transparent),
+        0 20px 46px -26px color-mix(in oklab, var(--primary) 58%, transparent),
+        0 4px 12px -6px rgb(2 8 23 / 0.1);
+    transition: box-shadow 0.45s ease, border-color 0.45s ease, --mx 0.22s ease-out, --my 0.22s ease-out;
+}
+
+.glass:hover,
+.liquid-glass:hover {
+    border-color: color-mix(in oklab, white 45%, transparent);
+    box-shadow:
+        inset 0 1px 0 0 color-mix(in oklab, white 75%, transparent),
+        inset 0 0 0 1px color-mix(in oklab, white 12%, transparent),
+        0 28px 60px -28px color-mix(in oklab, var(--primary) 70%, transparent),
+        0 6px 16px -6px rgb(2 8 23 / 0.14);
+}
+
+/* Barrido de luz continuo (sheen) — sensación líquida sin necesidad de hover. */
+.glass::after,
+.liquid-glass::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(115deg, transparent 38%, color-mix(in oklab, white 24%, transparent) 50%, transparent 62%);
+    background-size: 250% 100%;
+    background-position: 160% 0;
+    animation: glass-sheen 7s ease-in-out infinite;
+}
+.dark .glass::after,
+.dark .liquid-glass::after {
+    background: linear-gradient(115deg, transparent 38%, color-mix(in oklab, var(--aurora-2) 26%, transparent) 50%, transparent 62%);
+    background-size: 250% 100%;
+}
+
+@keyframes glass-sheen {
+    0% { background-position: 160% 0; }
+    55%, 100% { background-position: -160% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .glass,
+    .liquid-glass {
+        transition: box-shadow 0.4s ease, border-color 0.4s ease;
+    }
+    .glass::after,
+    .liquid-glass::after {
+        animation: none;
+        opacity: 0;
+    }
+}
+
+.dark .glass,
+.dark .liquid-glass {
+    background-color: color-mix(in oklab, var(--primary) 10%, color-mix(in oklab, var(--card) 44%, transparent));
+    background-image:
+        radial-gradient(150px circle at var(--mx) var(--my), color-mix(in oklab, white 34%, transparent), transparent 45%),
+        radial-gradient(340px circle at var(--mx) var(--my), color-mix(in oklab, var(--aurora-2) 40%, transparent), transparent 62%),
+        linear-gradient(160deg, color-mix(in oklab, white 12%, transparent) 0%, transparent 46%);
+    border-color: color-mix(in oklab, white 14%, transparent);
+    box-shadow:
+        inset 0 1px 0 0 color-mix(in oklab, white 20%, transparent),
+        0 24px 56px -30px rgb(0 0 0 / 0.8),
+        0 0 0 1px color-mix(in oklab, var(--primary) 14%, transparent);
+}
+
+.dark .glass:hover,
+.dark .liquid-glass:hover {
+    border-color: color-mix(in oklab, var(--aurora-2) 45%, transparent);
+    box-shadow:
+        inset 0 1px 0 0 color-mix(in oklab, white 28%, transparent),
+        0 30px 66px -30px rgb(0 0 0 / 0.85),
+        0 0 24px -6px color-mix(in oklab, var(--aurora-2) 35%, transparent),
+        0 0 0 1px color-mix(in oklab, var(--aurora-2) 30%, transparent);
+}
+
+/* Atmósfera de color de fondo: le da al cristal algo que refractar. */
+.app-atmosphere {
+    background-color: var(--background);
+    background-image:
+        radial-gradient(58% 50% at 10% -5%, color-mix(in oklab, var(--aurora-1) 15%, transparent), transparent 55%),
+        radial-gradient(50% 45% at 98% 6%, color-mix(in oklab, var(--aurora-2) 13%, transparent), transparent 55%),
+        radial-gradient(55% 55% at 82% 102%, color-mix(in oklab, var(--aurora-3) 12%, transparent), transparent 55%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+}
+
+/* Malla de gradiente atmosférica (aurora) */
+.aurora-mesh {
+    background-image:
+        radial-gradient(40% 55% at 12% 8%, color-mix(in oklab, var(--aurora-1) 38%, transparent), transparent 70%),
+        radial-gradient(45% 50% at 95% 0%, color-mix(in oklab, var(--aurora-2) 32%, transparent), transparent 65%),
+        radial-gradient(55% 60% at 78% 100%, color-mix(in oklab, var(--aurora-3) 30%, transparent), transparent 70%);
+}
+
+/* Borde con degradado (técnica de doble fondo) */
+.gradient-border {
+    border: 1px solid transparent;
+    background:
+        linear-gradient(var(--card), var(--card)) padding-box,
+        linear-gradient(135deg, color-mix(in oklab, var(--aurora-1) 60%, transparent), color-mix(in oklab, var(--aurora-3) 50%, transparent)) border-box;
+}
+
+/* Resplandor suave bajo elementos clave */
+.glow {
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 10%, transparent), 0 18px 50px -20px color-mix(in oklab, var(--primary) 45%, transparent);
+}
+
+/* Textura de grano sutil para profundidad */
+.grain::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.4;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Punto "en vivo" pulsante */
+.live-dot {
+    position: relative;
+}
+.live-dot::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 9999px;
+    background: currentColor;
+    opacity: 0.35;
+    animation: live-pulse 2s ease-out infinite;
+}
+
+@keyframes live-pulse {
+    0% { transform: scale(0.7); opacity: 0.5; }
+    70% { transform: scale(2.2); opacity: 0; }
+    100% { opacity: 0; }
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+@keyframes float-slow {
+    0%, 100% { transform: translateY(0) translateX(0); }
+    50% { transform: translateY(-14px) translateX(8px); }
+}
+
+.animate-float-slow {
+    animation: float-slow 12s ease-in-out infinite;
+}
+
+/* Brillo deslizante para barras de progreso / botones destacados */
+.shimmer {
+    background-image: linear-gradient(110deg, transparent 30%, color-mix(in oklab, white 35%, transparent) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: shimmer 2.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .animate-float-slow,
+    .shimmer,
+    .live-dot::after {
+        animation: none;
+    }
+}
