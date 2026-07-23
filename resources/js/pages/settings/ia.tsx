@@ -24,6 +24,8 @@ interface BotConfig {
     clinic_address: string;
     clinic_hours: string;
     clinic_payment: string;
+    clinic_payment_link: string;
+    clinic_landing: string;
     bot_persona: string;
     [key: string]: string;
 }
@@ -182,7 +184,34 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
                             </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="clinic_payment">Formas de pago</Label>
-                                <Input id="clinic_payment" value={botForm.data.clinic_payment} onChange={(e) => botForm.setData('clinic_payment', e.target.value)} />
+                                <Textarea
+                                    id="clinic_payment"
+                                    value={botForm.data.clinic_payment}
+                                    onChange={(e) => botForm.setData('clinic_payment', e.target.value)}
+                                    rows={4}
+                                    placeholder="Ej. Transferencia Bancolombia Ahorros 000000000 (Titular…), Nequi 300…, efectivo y tarjeta en el consultorio."
+                                />
+                                <p className="text-muted-foreground text-xs">
+                                    El bot comparte estos datos cuando el paciente pregunta cómo pagar o quiere apartar su cita. Escríbelos completos y exactos.
+                                </p>
+                            </div>
+                            <div className="grid gap-2">
+                                <Label htmlFor="clinic_payment_link">Link de pago en línea (Bold / PSE, opcional)</Label>
+                                <Input
+                                    id="clinic_payment_link"
+                                    value={botForm.data.clinic_payment_link}
+                                    onChange={(e) => botForm.setData('clinic_payment_link', e.target.value)}
+                                    placeholder="https://checkout.bold.co/payment/…"
+                                />
+                            </div>
+                            <div className="grid gap-2">
+                                <Label htmlFor="clinic_landing">Página web / landing (opcional)</Label>
+                                <Input
+                                    id="clinic_landing"
+                                    value={botForm.data.clinic_landing}
+                                    onChange={(e) => botForm.setData('clinic_landing', e.target.value)}
+                                    placeholder="https://tudominio.com"
+                                />
                             </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="bot_persona">Instrucciones / tono del bot (opcional)</Label>

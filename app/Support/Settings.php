@@ -231,6 +231,8 @@ class Settings
             'clinic_address' => self::get('clinic_address') ?: 'Carrera 16A # 82-95, consultorio 303, Bogotá',
             'clinic_hours' => self::get('clinic_hours') ?: 'Lunes a viernes de 8:00 a.m. a 6:00 p.m. y sábados de 9:00 a.m. a 1:00 p.m.',
             'clinic_payment' => self::get('clinic_payment') ?: 'Efectivo, tarjeta débito y crédito, y transferencia bancaria.',
+            'clinic_payment_link' => self::get('clinic_payment_link') ?: '',
+            'clinic_landing' => self::get('clinic_landing') ?: '',
             'bot_persona' => self::get('bot_persona') ?: '',
         ];
     }
@@ -240,7 +242,7 @@ class Settings
      */
     public static function setBotConfig(array $config): void
     {
-        foreach (['clinic_name', 'clinic_address', 'clinic_hours', 'clinic_payment', 'bot_persona'] as $key) {
+        foreach (['clinic_name', 'clinic_address', 'clinic_hours', 'clinic_payment', 'clinic_payment_link', 'clinic_landing', 'bot_persona'] as $key) {
             if (array_key_exists($key, $config)) {
                 self::put($key, $config[$key]);
             }

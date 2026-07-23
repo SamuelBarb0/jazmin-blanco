@@ -35,7 +35,9 @@ class AiSettingsController extends Controller
             'clinic_name' => ['nullable', 'string', 'max:255'],
             'clinic_address' => ['nullable', 'string', 'max:500'],
             'clinic_hours' => ['nullable', 'string', 'max:500'],
-            'clinic_payment' => ['nullable', 'string', 'max:500'],
+            'clinic_payment' => ['nullable', 'string', 'max:1000'],
+            'clinic_payment_link' => ['nullable', 'string', 'max:500'],
+            'clinic_landing' => ['nullable', 'string', 'max:255'],
             'bot_persona' => ['nullable', 'string', 'max:4000'],
         ]);
 

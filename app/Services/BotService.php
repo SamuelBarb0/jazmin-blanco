@@ -55,14 +55,13 @@ class BotService
 
         // Cada foto/video se envía UNA sola vez por conversación: recolectamos las URLs
         // ya enviadas antes y las filtramos abajo. Salvo que el paciente pida verlas de
-        // nuevo explícitamente, en cuyo caso permitimos el reenvío.
-        $alreadySent = $this->wantsMediaResend($conversation)
-            ? []
-            : $this->sentMediaUrls($conversation);
+        // nuevo explícitamente, en cuyo caso permitimos (y forzamos) el reenvío.
+        $wantsResend = $this->wantsMediaResend($conversation);
+        $alreadySent = $wantsResend ? [] : $this->sentMediaUrls($conversation);
 
         // Sin agenda conectada: respuesta de texto simple (comportamiento original).
         if (empty($tools)) {
-            return $this->parseMedia($this->ai->chat($system, $messages, 1024), $campaign, $alreadySent);
+            return $this->respond($this->ai->chat($system, $messages, 1024), $campaign, $alreadySent, $wantsResend, $conversation);
         }
 
         // Con agenda: ciclo de herramientas (el bot consulta disponibilidad y agenda).
@@ -91,10 +90,50 @@ class BotService
             // Respuesta final de texto.
             $text = collect($blocks)->where('type', 'text')->pluck('text')->implode("\n");
 
-            return $this->parseMedia($text, $campaign, $alreadySent);
+            return $this->respond($text, $campaign, $alreadySent, $wantsResend, $conversation);
         }
 
-        return $this->parseMedia('Disculpa, tuve un inconveniente al procesar tu solicitud. ¿Lo intentamos de nuevo?', $campaign, $alreadySent);
+        return $this->respond('Disculpa, tuve un inconveniente al procesar tu solicitud. ¿Lo intentamos de nuevo?', $campaign, $alreadySent, $wantsResend, $conversation);
+    }
+
+    /**
+     * Convierte el texto crudo del modelo en {texto, media}. Si el paciente pidió
+     * ver el material otra vez pero el modelo NO volvió a insertar la etiqueta
+     * [[media:...]] (no la ve en el historial porque se guarda ya limpia),
+     * reenvía de forma determinista lo último que se le mostró — así "muéstrame
+     * las fotos otra vez" SIEMPRE reenvía, sin depender de que el modelo repita la etiqueta.
+     *
+     * @return array{text:string, media:array<int,array{type:string,url:?string,caption:string,service:string}>}
+     */
+    private function respond(string $raw, ?Campaign $campaign, array $alreadySent, bool $wantsResend, Conversation $conversation): array
+    {
+        $result = $this->parseMedia($raw, $campaign, $alreadySent);
+
+        if ($wantsResend && empty($result['media'])) {
+            $result['media'] = $this->lastSentMedia($conversation);
+        }
+
+        return $result;
+    }
+
+    /**
+     * El último grupo de fotos/videos que se le envió al paciente en esta
+     * conversación (para reenviarlo cuando lo pida de nuevo).
+     *
+     * @return array<int,array{type:string,url:?string,caption:string,service:string}>
+     */
+    private function lastSentMedia(Conversation $conversation): array
+    {
+        $media = $conversation->messages()
+            ->where('role', 'assistant')
+            ->whereNotNull('media')
+            ->orderByDesc('id')
+            ->value('media');
+
+        return collect($media ?? [])
+            ->filter(fn ($m) => filled($m['url'] ?? null))
+            ->values()
+            ->all();
     }
 
     /**
@@ -554,6 +593,13 @@ class BotService
         $schedulingBlock = $this->canSchedule() ? $this->schedulingPrompt() : '';
         $campaignBlock = $campaign ? $this->campaignPrompt($campaign) : '';
 
+        $paymentLinkLine = filled($c['clinic_payment_link'] ?? null)
+            ? "\n- Link de pago en línea (Bold): {$c['clinic_payment_link']}"
+            : '';
+        $landingLine = filled($c['clinic_landing'] ?? null)
+            ? "\n- Página web con más información: {$c['clinic_landing']}"
+            : '';
+
         return <<<PROMPT
         Eres el asistente virtual de {$c['clinic_name']}, un consultorio de medicina estética premium dirigido por la Dra. Jasmin Blanco. Atiendes a pacientes por WhatsApp e Instagram con calidez y profesionalismo, como lo haría una asesora humana experimentada.
         {$campaignBlock}
@@ -575,7 +621,10 @@ class BotService
         - Nombre: {$c['clinic_name']}
         - Dirección: {$c['clinic_address']}
         - Horarios: {$c['clinic_hours']}
-        - Formas de pago: {$c['clinic_payment']}
+        - Formas de pago: {$c['clinic_payment']}{$paymentLinkLine}{$landingLine}
+
+        # Pagos
+        Cuando el paciente pregunte cómo pagar, quiera apartar/reservar su cita o valoración, o pida los datos de pago, compártele TODAS las opciones con naturalidad: el link de pago en línea (si existe) y también los datos para transferencia, consignación o Nequi (muchos pacientes prefieren no usar el link). Copia el link y los datos bancarios EXACTAMENTE como aparecen arriba, sin acortarlos ni cambiar un solo número. Nunca inventes cuentas, llaves ni links que no estén en esta información.
 
         # Reglas importantes (cumplimiento sanitario)
         - NO diagnosticas ni recetas. Toda recomendación requiere una valoración médica presencial con la Dra. Blanco.
