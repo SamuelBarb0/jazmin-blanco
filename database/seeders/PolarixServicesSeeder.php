@@ -203,9 +203,9 @@ class PolarixServicesSeeder extends Seeder
             ['name' => 'Hidrolipoclasia', 'category' => 'Medicina Estética', 'price' => null,
                 'short' => 'Reducción de grasa localizada por infiltración controlada. Incluida en el paquete reductor de medidas.',
                 'ai' => 'La hidrolipoclasia es un procedimiento médico para la reducción de grasa localizada mediante la infiltración controlada de soluciones específicas. Requiere valoración médica previa. Hace parte del paquete reductor de medidas (2 sesiones de hidrolipoclasia, 2 de ultrasonido y cavitación, 2 de drenaje linfático, 4 de mesoterapia reductora y reafirmante, 4 de vacuna antiobesidad y 4 de Tensamax; valor del paquete $1.400.000).'],
-            ['name' => 'Valoración Médica', 'category' => 'Consulta Médica', 'price' => 150000,
+            ['name' => 'Valoración Médica', 'category' => 'Consulta Médica', 'price' => 75000,
                 'short' => 'Consulta médica previa (presencial o virtual). Se descuenta del tratamiento.',
-                'ai' => 'Consulta médica previa, presencial o virtual. Valor $150.000, que se descuenta del tratamiento.'],
+                'ai' => 'Consulta médica previa, presencial o virtual. Valor $75.000, que se descuenta del tratamiento.'],
 
             // ── Estética (gravada IVA) ─────────────────────────
             ['name' => 'Depilación Láser Diodo · Zona grande (6 sesiones)', 'category' => 'Estética', 'price' => 650000,
