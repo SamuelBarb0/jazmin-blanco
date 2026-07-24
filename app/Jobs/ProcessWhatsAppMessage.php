@@ -37,8 +37,13 @@ class ProcessWhatsAppMessage implements ShouldQueue
     ) {
     }
 
-    public function handle(WhatsAppService $whatsapp): void
+    public function handle(): void
     {
+        // Se construye desde config (token + phone_id de las variables WHATSAPP_*).
+        // NO por inyección: sin un binding, el contenedor lo crearía con token/
+        // phone_id en null → isConfigured()=false → nunca respondería.
+        $whatsapp = WhatsAppService::fromConfig();
+
         try {
             if (! $whatsapp->isConfigured()) {
                 Log::warning('WhatsApp recibió un mensaje pero no está configurado para responder.');
