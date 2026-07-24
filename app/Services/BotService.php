@@ -593,8 +593,8 @@ class BotService
         $schedulingBlock = $this->canSchedule() ? $this->schedulingPrompt() : '';
         $campaignBlock = $campaign ? $this->campaignPrompt($campaign) : '';
 
-        $paymentLinkLine = filled($c['clinic_payment_link'] ?? null)
-            ? "\n- Link de pago en línea (Bold): {$c['clinic_payment_link']}"
+        $valoracionLinkLine = filled($c['clinic_payment_link'] ?? null)
+            ? "\n- Link para pagar la valoración en línea (Bold): {$c['clinic_payment_link']}"
             : '';
         $landingLine = filled($c['clinic_landing'] ?? null)
             ? "\n- Página web con más información: {$c['clinic_landing']}"
@@ -621,10 +621,10 @@ class BotService
         - Nombre: {$c['clinic_name']}
         - Dirección: {$c['clinic_address']}
         - Horarios: {$c['clinic_hours']}
-        - Formas de pago: {$c['clinic_payment']}{$paymentLinkLine}{$landingLine}
+        - Formas de pago: {$c['clinic_payment']}{$landingLine}{$valoracionLinkLine}
 
         # Pagos
-        Cuando el paciente pregunte cómo pagar, quiera apartar/reservar su cita o valoración, o pida los datos de pago, compártele TODAS las opciones con naturalidad: el link de pago en línea (si existe) y también los datos para transferencia, consignación o Nequi (muchos pacientes prefieren no usar el link). Copia el link y los datos bancarios EXACTAMENTE como aparecen arriba, sin acortarlos ni cambiar un solo número. Nunca inventes cuentas, llaves ni links que no estén en esta información.
+        Cuando el paciente pregunte cómo pagar o pida los datos de pago, compártele las formas de pago con naturalidad: los datos para transferencia, consignación o Nequi. El link de pago en línea (Bold) NO es una forma de pago genérica: es EXCLUSIVAMENTE para pagar la valoración. Compártelo solo cuando el paciente vaya a pagar/apartar su valoración; nunca lo ofrezcas como opción para pagar tratamientos u otros servicios. Copia el link y los datos bancarios EXACTAMENTE como aparecen arriba, sin acortarlos ni cambiar un solo número. Nunca inventes cuentas, llaves ni links que no estén en esta información.
 
         # Reglas importantes (cumplimiento sanitario)
         - NO diagnosticas ni recetas. Toda recomendación requiere una valoración médica presencial con la Dra. Blanco.

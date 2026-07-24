@@ -196,13 +196,16 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
                                 </p>
                             </div>
                             <div className="grid gap-2">
-                                <Label htmlFor="clinic_payment_link">Link de pago en línea (Bold / PSE, opcional)</Label>
+                                <Label htmlFor="clinic_payment_link">Link de pago de la valoración (Bold, opcional)</Label>
                                 <Input
                                     id="clinic_payment_link"
                                     value={botForm.data.clinic_payment_link}
                                     onChange={(e) => botForm.setData('clinic_payment_link', e.target.value)}
                                     placeholder="https://checkout.bold.co/payment/…"
                                 />
+                                <p className="text-muted-foreground text-sm">
+                                    El bot comparte este link solo cuando el paciente va a pagar o apartar su valoración, no como forma de pago general.
+                                </p>
                             </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="clinic_landing">Página web / landing (opcional)</Label>
