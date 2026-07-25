@@ -24,6 +24,7 @@ class Appointment extends Model
         'google_event_id',
         'google_synced_at',
         'google_sync_error',
+        'source_event_id',
     ];
 
     protected function casts(): array

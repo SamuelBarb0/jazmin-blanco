@@ -35,6 +35,8 @@ Route::middleware(['auth'])->group(function () {
 
     // Agenda — citas sincronizadas con Google Calendar
     Route::resource('appointments', AppointmentController::class)->only(['index', 'store', 'update', 'destroy']);
+    // Importa las citas existentes del calendario principal de la doctora
+    Route::post('appointments/import', [AppointmentController::class, 'importFromGoogle'])->name('appointments.import');
 
     // Campañas de Meta (contexto de origen para el bot)
     Route::post('campaigns/import', [CampaignController::class, 'import'])->name('campaigns.import');

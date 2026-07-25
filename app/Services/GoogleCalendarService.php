@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Appointment;
 use App\Support\Settings;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -135,22 +136,93 @@ class GoogleCalendarService
     {
         $this->assertConfigured();
 
+        // En modo OAuth también consultamos el calendario PRINCIPAL de la doctora
+        // (no solo el dedicado): así el bot no agenda encima de citas o eventos
+        // que ella tenga en su agenda personal.
+        $ids = array_values(array_unique(array_filter([
+            $this->calendarId,
+            $this->oauth ? 'primary' : null,
+        ])));
+
         $response = Http::withToken($this->accessToken())
             ->timeout(30)
             ->post(self::API.'/freeBusy', [
                 'timeMin' => $timeMin,
                 'timeMax' => $timeMax,
                 'timeZone' => $this->timezone,
-                'items' => [['id' => $this->calendarId]],
+                'items' => array_map(fn ($id) => ['id' => $id], $ids),
             ]);
 
         if ($response->failed()) {
             throw new RuntimeException($this->errorMessage($response->json(), $response->status()));
         }
 
-        $calendars = $response->json('calendars', []);
+        // Unimos los bloques ocupados de todos los calendarios consultados.
+        $busy = [];
+        foreach ($response->json('calendars', []) as $cal) {
+            foreach ($cal['busy'] ?? [] as $b) {
+                $busy[] = $b;
+            }
+        }
 
-        return $calendars[$this->calendarId]['busy'] ?? [];
+        return $busy;
+    }
+
+    /**
+     * Lista los eventos CON HORA de un calendario en un rango (para importarlos).
+     * Expande recurrencias (singleEvents), pagina, e ignora los de día completo.
+     * Las horas se entregan como "hora de pared" en la zona del consultorio,
+     * listas para guardarse igual que el resto de las citas.
+     *
+     * @return array<int,array{id:string,summary:string,description:?string,starts_at:string,ends_at:string}>
+     */
+    public function listEvents(string $calendarId, string $timeMin, string $timeMax): array
+    {
+        $this->assertConfigured();
+
+        $events = [];
+        $pageToken = null;
+
+        do {
+            $response = Http::withToken($this->accessToken())
+                ->timeout(30)
+                ->get(self::API.'/calendars/'.rawurlencode($calendarId).'/events', array_filter([
+                    'timeMin' => $timeMin,
+                    'timeMax' => $timeMax,
+                    'singleEvents' => 'true',
+                    'orderBy' => 'startTime',
+                    'maxResults' => 250,
+                    'pageToken' => $pageToken,
+                ]));
+
+            if ($response->failed()) {
+                throw new RuntimeException($this->errorMessage($response->json(), $response->status()));
+            }
+
+            foreach ($response->json('items', []) as $item) {
+                if (($item['status'] ?? '') === 'cancelled') {
+                    continue;
+                }
+                $start = $item['start']['dateTime'] ?? null;
+                $end = $item['end']['dateTime'] ?? null;
+                // Solo eventos con hora (ignoramos los de día completo).
+                if (! $start || ! $end) {
+                    continue;
+                }
+
+                $events[] = [
+                    'id' => $item['id'],
+                    'summary' => trim((string) ($item['summary'] ?? '')) ?: 'Cita sin título',
+                    'description' => $item['description'] ?? null,
+                    'starts_at' => Carbon::parse($start)->setTimezone($this->timezone)->format('Y-m-d\TH:i:s'),
+                    'ends_at' => Carbon::parse($end)->setTimezone($this->timezone)->format('Y-m-d\TH:i:s'),
+                ];
+            }
+
+            $pageToken = $response->json('nextPageToken');
+        } while ($pageToken);
+
+        return $events;
     }
 
     /**

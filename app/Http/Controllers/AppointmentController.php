@@ -35,6 +35,59 @@ class AppointmentController extends Controller
         ]);
     }
 
+    /**
+     * Importa las citas existentes del calendario PRINCIPAL de la doctora a la
+     * app, para no perder los pacientes que ya tenía antes de conectar el bot.
+     * Requiere OAuth (su token puede leer su calendario principal). Idempotente:
+     * no re-crea las ya importadas (dedup por source_event_id). No sincroniza al
+     * calendario dedicado — la disponibilidad del bot ya mira el principal.
+     */
+    public function importFromGoogle(Request $request): RedirectResponse
+    {
+        if (! Settings::hasGoogleOAuth()) {
+            return back()->with('error', 'Para importar tus citas, conecta tu Google con el botón «Conectar con Google» en Configuración → Google Calendar.');
+        }
+
+        $tz = Settings::googleTimezone();
+        $timeMin = Carbon::now($tz)->startOfDay()->toRfc3339String();
+        $timeMax = Carbon::now($tz)->addMonths(12)->toRfc3339String();
+
+        try {
+            // Las citas antiguas de la doctora viven en su calendario PRINCIPAL;
+            // el dedicado ("Citas Consultorio") lo gestiona la app.
+            $events = GoogleCalendarService::fromConfig()->listEvents('primary', $timeMin, $timeMax);
+        } catch (Throwable $e) {
+            return back()->with('error', 'No se pudieron leer tus citas de Google: '.$e->getMessage());
+        }
+
+        $user = $request->user();
+        $yaImportados = $user->appointments()->whereNotNull('source_event_id')->pluck('source_event_id')->flip();
+
+        $importadas = 0;
+        foreach ($events as $ev) {
+            if ($yaImportados->has($ev['id'])) {
+                continue;
+            }
+
+            $starts = Carbon::parse($ev['starts_at']);
+            $ends = Carbon::parse($ev['ends_at']);
+
+            $user->appointments()->create([
+                'patient_name' => mb_substr($ev['summary'], 0, 255),
+                'starts_at' => $starts,
+                'ends_at' => $ends->gt($starts) ? $ends : $starts->copy()->addMinutes(45),
+                'status' => 'scheduled',
+                'notes' => mb_substr(trim("Importada de tu Google Calendar (calendario principal).\n".($ev['description'] ?? '')), 0, 2000),
+                'source_event_id' => $ev['id'],
+            ]);
+            $importadas++;
+        }
+
+        return redirect()->route('appointments.index')->with('success', $importadas > 0
+            ? "Se importaron {$importadas} citas de tu Google Calendar."
+            : 'No hay citas nuevas para importar (ya estaban todas).');
+    }
+
     public function store(Request $request): RedirectResponse
     {
         $data = $this->validateData($request);

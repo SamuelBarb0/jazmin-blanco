@@ -10,6 +10,7 @@ import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import {
     AlertTriangle,
     CalendarDays,
+    CalendarPlus,
     CheckCircle2,
     ChevronLeft,
     ChevronRight,
@@ -90,6 +91,17 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
     const [open, setOpen] = useState(false);
     const [editing, setEditing] = useState<Appointment | null>(null);
     const [detail, setDetail] = useState<Appointment | null>(null);
+    const [importing, setImporting] = useState(false);
+
+    // Trae las citas existentes del calendario principal de la doctora a la app.
+    const importFromGoogle = () => {
+        if (importing) return;
+        router.post(
+            route('appointments.import'),
+            {},
+            { preserveScroll: true, onStart: () => setImporting(true), onFinish: () => setImporting(false) },
+        );
+    };
 
     const today = useMemo(() => new Date(), []);
     const todayKey = ymd(today);
@@ -214,9 +226,17 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                         <h1 className="font-display text-3xl tracking-tight">Agenda</h1>
                         <p className="text-muted-foreground">{appointments.length} citas · sincronizadas con Google Calendar.</p>
                     </div>
-                    <Button onClick={() => openNew(selectedKey)}>
-                        <Plus className="h-4 w-4" /> Nueva cita
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                        {googleConfigured && (
+                            <Button variant="outline" onClick={importFromGoogle} disabled={importing} title="Trae a la app las citas que ya tienes en tu Google Calendar">
+                                {importing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CalendarPlus className="h-4 w-4" />}
+                                Importar de Google
+                            </Button>
+                        )}
+                        <Button onClick={() => openNew(selectedKey)}>
+                            <Plus className="h-4 w-4" /> Nueva cita
+                        </Button>
+                    </div>
                 </div>
 
                 {!googleConfigured && (
@@ -234,6 +254,12 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
 
                 {flash?.success && (
                     <div className="rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm font-medium text-primary">{flash.success}</div>
+                )}
+
+                {flash?.error && (
+                    <div className="rounded-lg border border-red-300/60 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400">
+                        {flash.error}
+                    </div>
                 )}
 
                 <div className="grid flex-1 gap-4 lg:grid-cols-[1fr_340px]">
