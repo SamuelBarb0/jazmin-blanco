@@ -117,7 +117,24 @@ class WhatsAppWebhookController extends Controller
                 ?? data_get($message, 'interactive.list_reply.title')
                 ?? ''
             ),
+            // Imágenes/archivos: el paciente suele mandar la CAPTURA del
+            // comprobante de pago. El bot no ve el contenido, pero sí que llegó
+            // (para tratarlo como comprobante si están coordinando una cita).
+            'image' => $this->mediaNote('una imagen', data_get($message, 'image.caption')),
+            'document' => $this->mediaNote('un archivo', data_get($message, 'document.caption')),
             default => '',
         };
+    }
+
+    /**
+     * Nota que se le pasa al bot cuando el paciente envía una imagen o archivo,
+     * típicamente el comprobante de pago de la valoración.
+     */
+    private function mediaNote(string $tipo, ?string $caption): string
+    {
+        $note = "[El paciente envió {$tipo} por WhatsApp (posible comprobante de pago de la valoración).]";
+        $caption = trim((string) $caption);
+
+        return $caption !== '' ? $note.' La acompaña este texto: '.$caption : $note;
     }
 }

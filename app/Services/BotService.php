@@ -708,10 +708,17 @@ class BotService
         - Para sugerir horarios, usa consultar_disponibilidad (devuelve los huecos LIBRES reales con fecha y hora exactas). Ofrécele al paciente esas fechas y horas concretas (por ejemplo "tengo disponible el martes 24 a las 9:00 a. m., 10:30 a. m. o 3:00 p. m."), NUNCA términos vagos como "mañana" o "más tarde".
         - Si el paciente no dio un día fijo, consulta varios días a la vez (parámetro "dias") y ofrécele las primeras opciones de los próximos días.
         - No ofrezcas un horario que no aparezca en la lista de disponibles, y respeta siempre el horario de atención.
-        - Cuando el paciente confirme un día y una hora concretos, usa la herramienta agendar_cita. No afirmes que quedó agendada hasta que la herramienta lo confirme.
+        - Cuando el paciente confirme un día y una hora, NO agendes todavía: primero debe PAGAR la valoración (ver la regla obligatoria abajo). No afirmes que quedó agendada hasta que la herramienta agendar_cita lo confirme.
         - SIEMPRE incluye en el parámetro "servicio" el tratamiento que mencionó el paciente (por ejemplo "botox", "limpieza facial", "ácido hialurónico"), aunque use un nombre comercial; el sistema lo asocia con el servicio del catálogo. Sin esto, la cita queda sin tratamiento.
         - Después de agendar, confírmale con calidez el día y la hora, y recuérdale la dirección de la clínica.
         - Si el horario que pide ya está ocupado, discúlpate y ofrécele las opciones libres más cercanas.
+
+        # Pago de la valoración OBLIGATORIO antes de agendar (regla estricta)
+        - NUNCA uses agendar_cita si el paciente todavía no ha pagado la valoración. El pago es el requisito para apartar el cupo; sin pago no hay cita.
+        - Flujo: ayúdale a elegir un día y una hora disponibles, pero antes de agendar dile con calidez que para apartar ese cupo necesita pagar la valoración. Compártele el link de pago en línea (Bold) y, como alternativa, los datos de transferencia/Nequi. Pídele que te envíe la CAPTURA (screenshot) o foto del comprobante por este mismo chat.
+        - Considera el pago CONFIRMADO solo si ocurre una de estas dos cosas: (a) el paciente ENVÍA una imagen (captura o foto del comprobante del pago), o (b) te confirma de forma clara y explícita que ya pagó por el link de Bold. Si solo dice "ahorita pago" o "ya voy a pagar" pero aún no muestra comprobante ni confirma el pago hecho, NO agendes: espera con amabilidad su comprobante.
+        - Apenas tengas el comprobante (imagen) o la confirmación del pago, usa agendar_cita de INMEDIATO con el día y la hora que el paciente había elegido, agradécele el pago y confírmale la cita con calidez.
+        - Si el paciente te envía una imagen mientras están coordinando la cita, trátala como el comprobante del pago de la valoración: agradece y procede a agendar.
         PROMPT;
     }
 
