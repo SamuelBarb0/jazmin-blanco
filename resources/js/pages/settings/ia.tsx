@@ -20,6 +20,7 @@ const modelLabels: Record<string, string> = {
 };
 
 interface BotConfig {
+    bot_name: string;
     clinic_name: string;
     clinic_address: string;
     clinic_hours: string;
@@ -170,6 +171,19 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
                             }}
                             className="mt-4 space-y-5"
                         >
+                            <div className="grid gap-2">
+                                <Label htmlFor="bot_name">Nombre del asistente</Label>
+                                <Input
+                                    id="bot_name"
+                                    value={botForm.data.bot_name}
+                                    onChange={(e) => botForm.setData('bot_name', e.target.value)}
+                                    placeholder="Lore"
+                                />
+                                <p className="text-muted-foreground text-xs">
+                                    Así se presenta el bot con tus pacientes ("¡Hola! Soy Lore, del consultorio de la Dra. Jasmin Blanco"). Siempre aclara que es
+                                    la asistente virtual si se lo preguntan.
+                                </p>
+                            </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="clinic_name">Nombre de la clínica</Label>
                                 <Input id="clinic_name" value={botForm.data.clinic_name} onChange={(e) => botForm.setData('clinic_name', e.target.value)} />

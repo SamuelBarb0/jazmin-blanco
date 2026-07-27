@@ -32,6 +32,7 @@ class AiSettingsController extends Controller
     public function updateBot(Request $request): RedirectResponse
     {
         $data = $request->validate([
+            'bot_name' => ['nullable', 'string', 'max:60'],
             'clinic_name' => ['nullable', 'string', 'max:255'],
             'clinic_address' => ['nullable', 'string', 'max:500'],
             'clinic_hours' => ['nullable', 'string', 'max:500'],
