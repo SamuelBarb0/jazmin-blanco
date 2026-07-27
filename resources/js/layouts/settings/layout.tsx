@@ -27,6 +27,11 @@ const sidebarNavItems: NavItem[] = [
         icon: null,
     },
     {
+        title: 'Pagos',
+        url: '/settings/pagos',
+        icon: null,
+    },
+    {
         title: 'Apariencia',
         url: '/settings/appearance',
         icon: null,

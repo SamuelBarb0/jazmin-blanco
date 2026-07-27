@@ -18,6 +18,8 @@ class Settings
     private const KEY_GOOGLE_CALENDAR = 'google_calendar_id';
     private const KEY_GOOGLE_TIMEZONE = 'google_timezone';
     private const KEY_GOOGLE_OAUTH = 'google_oauth';
+    private const KEY_BOLD_IDENTITY = 'bold_identity_key';
+    private const KEY_BOLD_SECRET = 'bold_secret_key';
 
     public static function get(string $key, ?string $default = null): ?string
     {
@@ -247,6 +249,73 @@ class Settings
             if (array_key_exists($key, $config)) {
                 self::put($key, $config[$key]);
             }
+        }
+    }
+
+    /**
+     * Llaves de integración de Bold (pagos en línea).
+     *
+     * Se guardan cifradas, como la de Anthropic. La de IDENTIDAD es la que usa
+     * la API para crear y consultar links; la SECRETA solo hace falta para
+     * validar la firma de los webhooks, si algún día se activan.
+     */
+    public static function boldIdentityKey(): ?string
+    {
+        return self::decrypt(self::KEY_BOLD_IDENTITY);
+    }
+
+    public static function boldSecretKey(): ?string
+    {
+        return self::decrypt(self::KEY_BOLD_SECRET);
+    }
+
+    public static function setBold(?string $identity, ?string $secret): void
+    {
+        if (filled($identity)) {
+            self::put(self::KEY_BOLD_IDENTITY, Crypt::encryptString($identity));
+        }
+
+        if (filled($secret)) {
+            self::put(self::KEY_BOLD_SECRET, Crypt::encryptString($secret));
+        }
+    }
+
+    public static function clearBold(): void
+    {
+        self::put(self::KEY_BOLD_IDENTITY, null);
+        self::put(self::KEY_BOLD_SECRET, null);
+    }
+
+    public static function hasBold(): bool
+    {
+        return filled(self::boldIdentityKey());
+    }
+
+    /** Valor de la valoración que se le cobra a la paciente para apartar el cupo. */
+    public static function valoracionAmount(): int
+    {
+        return (int) (self::get('valoracion_amount') ?: 75000);
+    }
+
+    public static function setValoracionAmount(?int $amount): void
+    {
+        if ($amount) {
+            self::put('valoracion_amount', (string) $amount);
+        }
+    }
+
+    private static function decrypt(string $key): ?string
+    {
+        $stored = self::get($key);
+
+        if (blank($stored)) {
+            return null;
+        }
+
+        try {
+            return Crypt::decryptString($stored);
+        } catch (Throwable) {
+            return null;
         }
     }
 

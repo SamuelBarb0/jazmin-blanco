@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Campaign;
 use App\Models\Conversation;
+use App\Models\PaymentLink;
 use App\Models\Service;
 use App\Models\User;
 use App\Support\PatientLeads;
@@ -298,7 +299,7 @@ class BotService
      */
     private function bookingTools(): array
     {
-        return [
+        $tools = [
             [
                 'name' => 'consultar_disponibilidad',
                 'description' => 'Devuelve los horarios LIBRES reales de la clínica (fechas y horas exactas), ya descontando lo ocupado en la agenda y respetando el horario de atención. Úsala ANTES de proponer horarios y ofrécele al paciente las fechas y horas concretas que devuelva, nunca términos vagos como "mañana". Puedes revisar varios días a la vez con el parámetro "dias".',
@@ -329,6 +330,29 @@ class BotService
                 ],
             ],
         ];
+
+        // Con Bold conectado, el pago deja de ser una promesa: el bot genera un
+        // link propio para esa paciente y le pregunta a Bold si de verdad pagó.
+        if (BoldService::fromConfig()->isConfigured()) {
+            $tools[] = [
+                'name' => 'generar_link_pago',
+                'description' => 'Genera un link de pago ÚNICO para esta paciente y devuelve la URL para compartirle. Úsala cuando ya acordaron día y hora y le vas a pedir el pago de la valoración. No inventes links: usa siempre el que devuelva esta herramienta.',
+                'input_schema' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'concepto' => ['type' => 'string', 'description' => 'Qué se está cobrando, por ejemplo "Valoración médica". Si se omite, se cobra la valoración.'],
+                    ],
+                    'required' => [],
+                ],
+            ];
+            $tools[] = [
+                'name' => 'verificar_pago',
+                'description' => 'Consulta en la pasarela si la paciente YA pagó el link que se le compartió. Úsala SIEMPRE que diga que pagó, antes de agendar. Devuelve si el pago está confirmado o todavía pendiente.',
+                'input_schema' => ['type' => 'object', 'properties' => [], 'required' => []],
+            ];
+        }
+
+        return $tools;
     }
 
     /**
@@ -342,6 +366,8 @@ class BotService
             return match ($name) {
                 'consultar_disponibilidad' => $this->toolAvailability($input),
                 'agendar_cita' => $this->toolBook($input),
+                'generar_link_pago' => $this->toolPaymentLink($input),
+                'verificar_pago' => $this->toolCheckPayment(),
                 default => 'Herramienta desconocida.',
             };
         } catch (Throwable $e) {
@@ -452,10 +478,112 @@ class BotService
     }
 
     /**
+     * Genera un link de pago propio de esta paciente. La `reference` lleva el id
+     * de la conversación, que es lo que permite saber después quién pagó.
+     *
+     * @param  array<string,mixed>  $input
+     */
+    private function toolPaymentLink(array $input): string
+    {
+        $bold = BoldService::fromConfig();
+        $monto = Settings::valoracionAmount();
+        $concepto = trim((string) ($input['concepto'] ?? '')) ?: 'Valoración médica';
+
+        $referencia = 'conv-'.($this->conversation?->id ?? 0).'-'.now()->timestamp;
+
+        $link = $bold->createLink(
+            $monto,
+            $referencia,
+            $concepto,
+            // El link vive 24 horas: suficiente para que pague sin que quede vivo para siempre.
+            now()->addDay(),
+        );
+
+        PaymentLink::create([
+            'user_id' => $this->user->id,
+            'conversation_id' => $this->conversation?->id,
+            'lead_id' => $this->conversation?->lead_id,
+            'reference' => BoldService::sanitizeReference($referencia),
+            'payment_link' => $link['payment_link'],
+            'url' => $link['url'],
+            'amount' => $monto,
+            'description' => $concepto,
+            'status' => 'ACTIVE',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $formateado = '$'.number_format($monto, 0, ',', '.');
+
+        return "Link de pago generado por {$formateado} ({$concepto}). Compártele EXACTAMENTE esta URL: {$link['url']} "
+            .'Dile que puede pagar con tarjeta, PSE, Botón Bancolombia o Nequi, y que te avise cuando termine para confirmarle la cita.';
+    }
+
+    /**
+     * Le pregunta a la pasarela si el último link de esta paciente ya fue pagado.
+     * Es la diferencia entre creerle y comprobarlo.
+     */
+    private function toolCheckPayment(): string
+    {
+        $link = $this->latestPaymentLink();
+
+        if (! $link) {
+            return 'ERROR: todavía no se le ha generado un link de pago a esta paciente. Genera uno con generar_link_pago antes de verificar.';
+        }
+
+        if ($link->isPaid()) {
+            return 'PAGO CONFIRMADO. Ya puedes agendar la cita.';
+        }
+
+        $estado = BoldService::fromConfig()->linkStatus($link->payment_link);
+
+        $link->forceFill([
+            'status' => $estado['status'],
+            'payment_method' => $estado['payment_method'],
+            'paid_at' => $estado['status'] === PaymentLink::PAGADO ? now() : null,
+            'checked_at' => now(),
+        ])->save();
+
+        return match ($estado['status']) {
+            'PAID' => 'PAGO CONFIRMADO. Ya puedes agendar la cita.',
+            'PROCESSING' => 'El pago está en proceso, todavía no se confirma. Pídele que espere un momento y vuelve a verificar; NO agendes aún.',
+            'REJECTED' => 'El pago fue RECHAZADO. Avísale con amabilidad y ofrécele intentar de nuevo con el mismo link u otro medio de pago. NO agendes.',
+            'EXPIRED', 'CANCELLED' => 'El link venció o fue cancelado. Genera uno nuevo con generar_link_pago. NO agendes.',
+            default => 'El pago AÚN NO figura como realizado. No agendes todavía; dile con amabilidad que en cuanto se refleje le confirmas la cita.',
+        };
+    }
+
+    /** Último link generado en esta conversación. */
+    private function latestPaymentLink(): ?PaymentLink
+    {
+        if (! $this->conversation) {
+            return null;
+        }
+
+        return PaymentLink::where('conversation_id', $this->conversation->id)
+            ->latest('id')
+            ->first();
+    }
+
+    /**
      * @param  array<string,mixed>  $input
      */
     private function toolBook(array $input): string
     {
+        // Con la pasarela conectada, el pago deja de depender de la palabra de
+        // la paciente ni de que el modelo respete el prompt: si no hay un link
+        // pagado de verdad, aquí no se agenda.
+        if (BoldService::fromConfig()->isConfigured()) {
+            $link = $this->latestPaymentLink();
+
+            if (! $link) {
+                return 'ERROR: no puedes agendar todavía porque esta paciente no ha pagado la valoración. Genera el link con generar_link_pago y compártelo.';
+            }
+
+            if (! $link->isPaid()) {
+                return 'ERROR: el pago de esta paciente NO está confirmado en la pasarela. Verifícalo con verificar_pago; si sigue pendiente, no agendes y dile con amabilidad que en cuanto se refleje el pago le confirmas la cita.';
+            }
+        }
+
         $tz = Settings::googleTimezone();
         $start = Carbon::parse($input['fecha_hora'], $tz);
 
@@ -755,6 +883,15 @@ class BotService
         $tz = Settings::googleTimezone();
         $hoy = Carbon::now($tz)->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY');
 
+        // Con pasarela conectada el pago se genera y se comprueba de verdad;
+        // sin ella, seguimos con el link fijo y la palabra del paciente.
+        $pagoBlock = BoldService::fromConfig()->isConfigured()
+            ? "\n        - Genera su link de pago con generar_link_pago (es único para ella) y compártele EXACTAMENTE la URL que devuelva. Nunca inventes ni reutilices links de otras pacientes."
+                ."\n        - Cuando diga que ya pagó, comprueba SIEMPRE con verificar_pago antes de agendar. Si el pago no está confirmado, no agendes: dile con amabilidad que aún no se refleja y que apenas entre le confirmas la cita."
+                ."\n        - El link acepta tarjeta, PSE, Botón Bancolombia y Nequi, así que no necesitas dar datos de cuentas bancarias."
+            : "\n        - Compártele el link de pago en línea (Bold) y pídele que te AVISE por este chat cuando ya lo haya hecho."
+                ."\n        - Considera el pago confirmado si te lo dice de forma clara y explícita.";
+
         return <<<PROMPT
         # Agendamiento de citas (tienes la agenda conectada)
         Hoy es {$hoy} (zona horaria {$tz}). Puedes agendar citas tú mismo.
@@ -771,11 +908,11 @@ class BotService
 
         # Pago de la valoración OBLIGATORIO antes de agendar (regla estricta)
         - NUNCA uses agendar_cita si el paciente todavía no ha pagado la valoración. El pago es el requisito para apartar el cupo; sin pago no hay cita.
-        - Flujo: ayúdale a elegir un día y una hora disponibles, pero antes de agendar dile con calidez que para apartar ese cupo necesita pagar la valoración. Compártele el link de pago en línea (Bold) y pídele que te AVISE por este chat cuando ya lo haya hecho.
-        - NUNCA le pidas la captura del comprobante, ni los datos de su tarjeta o cuenta: para apartar el cupo te basta con que te confirme que ya pagó.
-        - Considera el pago CONFIRMADO si ocurre una de estas dos cosas: (a) el paciente te confirma de forma clara y explícita que YA pagó, o (b) envía por su propia iniciativa una imagen del comprobante. Si solo dice "ahorita pago" o "ya voy a pagar", NO agendes: espera con amabilidad su confirmación.
-        - Si el paciente envía una imagen por su cuenta mientras coordinan la cita, trátala como su comprobante: agradécele, NO transcribas ni comentes los datos que aparezcan en ella, y procede a agendar.
-        - Apenas tengas la confirmación del pago, usa agendar_cita de INMEDIATO con el día y la hora que el paciente había elegido, agradécele el pago y confírmale la cita con calidez.
+        - Flujo: ayúdale a elegir un día y una hora disponibles, pero antes de agendar dile con calidez que para apartar ese cupo necesita pagar la valoración.{$pagoBlock}
+        - NUNCA le pidas la captura del comprobante, ni los datos de su tarjeta o cuenta.
+        - Si solo dice "ahorita pago" o "ya voy a pagar", NO agendes: espera con amabilidad a que el pago se concrete.
+        - Si el paciente envía una imagen por su cuenta mientras coordinan la cita, agradécele pero NO transcribas ni comentes los datos que aparezcan en ella.
+        - Apenas el pago esté confirmado, usa agendar_cita de INMEDIATO con el día y la hora que el paciente había elegido, agradécele el pago y confírmale la cita con calidez.
         PROMPT;
     }
 

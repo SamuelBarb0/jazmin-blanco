@@ -3,6 +3,7 @@
 use App\Http\Controllers\Settings\AiSettingsController;
 use App\Http\Controllers\Settings\GoogleCalendarSettingsController;
 use App\Http\Controllers\Settings\PasswordController;
+use App\Http\Controllers\Settings\PaymentSettingsController;
 use App\Http\Controllers\Settings\ProfileController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -27,6 +28,12 @@ Route::middleware('auth')->group(function () {
     Route::delete('settings/ia', [AiSettingsController::class, 'destroy'])->name('ai.destroy');
     Route::post('settings/ia/test', [AiSettingsController::class, 'test'])->name('ai.test');
     Route::put('settings/ia/bot', [AiSettingsController::class, 'updateBot'])->name('ai.bot');
+
+    // Pagos en línea (Bold)
+    Route::get('settings/pagos', [PaymentSettingsController::class, 'edit'])->name('payments.edit');
+    Route::put('settings/pagos', [PaymentSettingsController::class, 'update'])->name('payments.update');
+    Route::delete('settings/pagos', [PaymentSettingsController::class, 'destroy'])->name('payments.destroy');
+    Route::post('settings/pagos/test', [PaymentSettingsController::class, 'test'])->name('payments.test');
 
     // Integración Google Calendar (cuenta de servicio)
     Route::get('settings/calendar', [GoogleCalendarSettingsController::class, 'edit'])->name('calendar.edit');
