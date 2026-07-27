@@ -5,7 +5,7 @@ import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, Sid
 import { useMobileNavigation } from '@/hooks/use-mobile-navigation';
 import { type NavItem } from '@/types';
 import { Link } from '@inertiajs/react';
-import { BookText, Bot, CalendarDays, Columns3, LayoutGrid, Megaphone, Sparkles, Users } from 'lucide-react';
+import { BookText, Bot, CalendarDays, Columns3, LayoutGrid, Megaphone, MessagesSquare, Sparkles, Users } from 'lucide-react';
 import AppLogo from './app-logo';
 
 const mainNavItems: NavItem[] = [
@@ -13,6 +13,11 @@ const mainNavItems: NavItem[] = [
         title: 'Dashboard',
         url: '/dashboard',
         icon: LayoutGrid,
+    },
+    {
+        title: 'Conversaciones',
+        url: '/inbox',
+        icon: MessagesSquare,
     },
     {
         title: 'Pipeline',

@@ -112,6 +112,12 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 'content' => $this->text,
             ]);
 
+            // La doctora tomó el control de este chat: el mensaje queda guardado
+            // y visible en la bandeja, pero el asistente no contesta.
+            if (! $conversation->bot_enabled) {
+                return;
+            }
+
             $bot = BotService::fromUser($doctor);
             if (! $bot->isReady()) {
                 Log::warning('La IA no está configurada (falta ANTHROPIC_API_KEY); no se responde el WhatsApp.');
@@ -146,6 +152,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
             $conversation->messages()->create([
                 'role' => 'assistant',
+                'sent_by' => 'bot',
                 'content' => $result['text'],
                 'media' => $result['media'] ?: null,
             ]);

@@ -4,6 +4,7 @@ use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\BotController;
 use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\CampaignMediaController;
+use App\Http\Controllers\InboxController;
 use App\Http\Controllers\KnowledgeController;
 use App\Http\Controllers\LeadController;
 use App\Http\Controllers\PipelineController;
@@ -52,6 +53,12 @@ Route::middleware(['auth'])->group(function () {
     Route::get('asistente', [BotController::class, 'playground'])->name('bot.playground');
     Route::post('asistente/chat', [BotController::class, 'chat'])->name('bot.chat');
     Route::post('asistente/reset', [BotController::class, 'reset'])->name('bot.reset');
+
+    // Bandeja de conversaciones reales: la doctora puede pausar al asistente y responder ella
+    Route::get('inbox', [InboxController::class, 'index'])->name('inbox.index');
+    Route::get('inbox/{conversation}', [InboxController::class, 'index'])->name('inbox.show');
+    Route::patch('inbox/{conversation}/bot', [InboxController::class, 'toggleBot'])->name('inbox.toggle');
+    Route::post('inbox/{conversation}/send', [InboxController::class, 'send'])->name('inbox.send');
 });
 
 require __DIR__.'/settings.php';
