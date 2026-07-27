@@ -6,6 +6,7 @@ use App\Models\Appointment;
 use App\Models\Conversation;
 use App\Models\User;
 use App\Services\WhatsAppService;
+use App\Support\PatientLeads;
 use App\Support\Settings;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
@@ -164,7 +165,11 @@ class SendAppointmentReminders extends Command
             ->whereBetween('starts_at', [$desde, $hasta])
             ->with(['service:id,name', 'lead:id,name,phone'])
             ->orderBy('starts_at')
-            ->get();
+            ->get()
+            // Los marcadores del calendario de la doctora ("FESTIVO", "PERU"…)
+            // son citas en la agenda, pero no hay nadie a quien recordarle nada.
+            ->reject(fn (Appointment $a) => blank($a->patient_phone) && PatientLeads::isNonPatient($a->patient_name))
+            ->values();
     }
 
     /**
