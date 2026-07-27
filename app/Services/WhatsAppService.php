@@ -85,6 +85,43 @@ class WhatsAppService
     }
 
     /**
+     * Envía una plantilla aprobada por Meta.
+     *
+     * Es la ÚNICA forma de escribirle al paciente fuera de la ventana de 24h
+     * desde su último mensaje — justo el caso de los recordatorios de cita, que
+     * salen dos días antes. La plantilla debe existir y estar aprobada en el
+     * WhatsApp Manager con este mismo nombre e idioma.
+     *
+     * @param  list<string>  $params  valores para los {{1}}, {{2}}… del cuerpo
+     */
+    public function sendTemplate(string $to, string $template, string $language = 'es', array $params = []): bool
+    {
+        $components = [];
+        if ($params !== []) {
+            $components[] = [
+                'type' => 'body',
+                'parameters' => array_map(
+                    // WhatsApp rechaza saltos de línea y tabulaciones en los parámetros.
+                    fn ($p) => ['type' => 'text', 'text' => Str::limit(preg_replace('/\s+/', ' ', (string) $p), 1000, '…')],
+                    array_values($params),
+                ),
+            ];
+        }
+
+        return $this->post([
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+            'to' => $to,
+            'type' => 'template',
+            'template' => [
+                'name' => $template,
+                'language' => ['code' => $language],
+                ...($components ? ['components' => $components] : []),
+            ],
+        ]);
+    }
+
+    /**
      * @param  array<string,mixed>  $payload
      */
     private function post(array $payload): bool

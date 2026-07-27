@@ -227,6 +227,7 @@ class Settings
     public static function botConfig(): array
     {
         return [
+            'bot_name' => self::get('bot_name') ?: 'Lore',
             'clinic_name' => self::get('clinic_name') ?: 'Consultorio Dra. Jasmin Blanco',
             'clinic_address' => self::get('clinic_address') ?: 'Carrera 16A # 82-95, consultorio 303, Bogotá',
             'clinic_hours' => self::get('clinic_hours') ?: 'Lunes a viernes de 8:00 a.m. a 6:00 p.m. y sábados de 9:00 a.m. a 1:00 p.m.',
@@ -242,9 +243,45 @@ class Settings
      */
     public static function setBotConfig(array $config): void
     {
-        foreach (['clinic_name', 'clinic_address', 'clinic_hours', 'clinic_payment', 'clinic_payment_link', 'clinic_landing', 'bot_persona'] as $key) {
+        foreach (['bot_name', 'clinic_name', 'clinic_address', 'clinic_hours', 'clinic_payment', 'clinic_payment_link', 'clinic_landing', 'bot_persona'] as $key) {
             if (array_key_exists($key, $config)) {
                 self::put($key, $config[$key]);
+            }
+        }
+    }
+
+    /**
+     * Recordatorios de cita por WhatsApp.
+     *
+     * La plantilla se deja configurable porque cada clínica registra la suya en
+     * su propio WhatsApp Manager. Si no hay plantilla, los recordatorios se
+     * mandan como texto libre, que Meta SOLO entrega si el paciente escribió en
+     * las últimas 24h (sirve para probar, no para producción).
+     *
+     * @return array{enabled:bool, template:string, language:string, country_code:string}
+     */
+    public static function reminderConfig(): array
+    {
+        return [
+            'enabled' => self::get('reminders_enabled', '1') === '1',
+            'template' => self::get('reminder_template') ?: '',
+            'language' => self::get('reminder_language') ?: 'es',
+            'country_code' => self::get('reminder_country_code') ?: '57',
+        ];
+    }
+
+    /**
+     * @param  array<string,mixed>  $config
+     */
+    public static function setReminderConfig(array $config): void
+    {
+        if (array_key_exists('enabled', $config)) {
+            self::put('reminders_enabled', $config['enabled'] ? '1' : '0');
+        }
+
+        foreach (['template' => 'reminder_template', 'language' => 'reminder_language', 'country_code' => 'reminder_country_code'] as $campo => $key) {
+            if (array_key_exists($campo, $config)) {
+                self::put($key, $config[$campo]);
             }
         }
     }

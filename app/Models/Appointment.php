@@ -25,6 +25,8 @@ class Appointment extends Model
         'google_synced_at',
         'google_sync_error',
         'source_event_id',
+        'reminder_2d_sent_at',
+        'reminder_1d_sent_at',
     ];
 
     protected function casts(): array
@@ -33,6 +35,8 @@ class Appointment extends Model
             'starts_at' => 'datetime',
             'ends_at' => 'datetime',
             'google_synced_at' => 'datetime',
+            'reminder_2d_sent_at' => 'datetime',
+            'reminder_1d_sent_at' => 'datetime',
         ];
     }
 
