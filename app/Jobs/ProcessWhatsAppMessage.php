@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\BotService;
 use App\Services\MetaAdsService;
 use App\Services\WhatsAppService;
+use App\Support\PatientLeads;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -72,16 +73,15 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // Campaña de origen (si vino de un anuncio Click-to-WhatsApp).
             $campaign = $this->resolveCampaign($doctor);
 
-            // Lead por teléfono (lo crea si es la primera vez que escribe).
-            $lead = $doctor->leads()->firstOrCreate(
-                ['phone' => $this->from],
-                [
-                    'name' => $this->profileName ?: $this->from,
-                    'channel' => 'whatsapp',
-                    'source' => $this->referral['headline'] ?? 'whatsapp',
-                    'last_contact_at' => now(),
-                ],
-            );
+            // Lead por teléfono (lo crea si es la primera vez que escribe). Si
+            // la paciente ya estaba en el pipeline por la agenda —sin teléfono,
+            // porque el calendario solo trae el nombre— se le completa el número
+            // en vez de crear un duplicado.
+            $lead = PatientLeads::resolve($doctor, $this->profileName, $this->from, [
+                'channel' => 'whatsapp',
+                'source' => $this->referral['headline'] ?? 'whatsapp',
+                'last_contact_at' => now(),
+            ]);
 
             // Completa el nombre real si Meta lo trae y antes no lo teníamos.
             if (filled($this->profileName) && ($lead->name === $this->from || blank($lead->name))) {

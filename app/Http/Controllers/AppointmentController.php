@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Appointment;
 use App\Services\GoogleCalendarService;
+use App\Support\PatientLeads;
 use App\Support\Settings;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -62,6 +63,7 @@ class AppointmentController extends Controller
 
         $user = $request->user();
         $yaImportados = $user->appointments()->whereNotNull('source_event_id')->pluck('source_event_id')->flip();
+        $leads = $user->leads()->get();
 
         $importadas = 0;
         foreach ($events as $ev) {
@@ -72,7 +74,22 @@ class AppointmentController extends Controller
             $starts = Carbon::parse($ev['starts_at']);
             $ends = Carbon::parse($ev['ends_at']);
 
+            // Cada paciente de la agenda entra también al pipeline. Los títulos
+            // que son marcadores del calendario ("FESTIVO", "PERU"…) se importan
+            // como cita pero sin crear un lead falso.
+            $lead = PatientLeads::resolve($user, $ev['summary'], null, [
+                'stage_id' => PatientLeads::stageId($user, $starts->isFuture() ? 'agendado' : 'cerrado'),
+                'source' => 'agenda',
+                'notes' => 'Paciente importada de tu Google Calendar.',
+                'last_contact_at' => $starts->isPast() ? $starts : now(),
+            ], $leads);
+
+            if ($lead && ! $leads->contains('id', $lead->id)) {
+                $leads->push($lead);
+            }
+
             $user->appointments()->create([
+                'lead_id' => $lead?->id,
                 'patient_name' => mb_substr($ev['summary'], 0, 255),
                 'starts_at' => $starts,
                 'ends_at' => $ends->gt($starts) ? $ends : $starts->copy()->addMinutes(45),
@@ -201,8 +218,20 @@ class AppointmentController extends Controller
         }
         $duration = (int) ($duration ?: 45);
 
+        // Toda cita debe tener a su paciente en el pipeline: si no se eligió un
+        // lead, se busca por teléfono/nombre y se crea si es la primera vez.
+        $leadId = $data['lead_id'] ?? null;
+        if (! $leadId) {
+            $leadId = PatientLeads::resolve($request->user(), $data['patient_name'], $data['patient_phone'] ?? null, [
+                'stage_id' => PatientLeads::stageId($request->user(), $starts->isFuture() ? 'agendado' : 'cerrado'),
+                'email' => $data['patient_email'] ?? null,
+                'service_interest' => $request->user()->services()->whereKey($data['service_id'] ?? null)->value('name'),
+                'last_contact_at' => now(),
+            ])?->id;
+        }
+
         return [
-            'lead_id' => $data['lead_id'] ?? null,
+            'lead_id' => $leadId,
             'service_id' => $data['service_id'] ?? null,
             'patient_name' => $data['patient_name'],
             'patient_phone' => $data['patient_phone'] ?? null,
