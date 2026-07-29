@@ -29,7 +29,7 @@ Route::middleware('auth')->group(function () {
     Route::post('settings/ia/test', [AiSettingsController::class, 'test'])->name('ai.test');
     Route::put('settings/ia/bot', [AiSettingsController::class, 'updateBot'])->name('ai.bot');
 
-    // Pagos en línea (Bold)
+    // Pagos en línea (Mercado Pago)
     Route::get('settings/pagos', [PaymentSettingsController::class, 'edit'])->name('payments.edit');
     Route::put('settings/pagos', [PaymentSettingsController::class, 'update'])->name('payments.update');
     Route::delete('settings/pagos', [PaymentSettingsController::class, 'destroy'])->name('payments.destroy');

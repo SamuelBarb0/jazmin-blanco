@@ -331,9 +331,9 @@ class BotService
             ],
         ];
 
-        // Con Bold conectado, el pago deja de ser una promesa: el bot genera un
-        // link propio para esa paciente y le pregunta a Bold si de verdad pagó.
-        if (BoldService::fromConfig()->isConfigured()) {
+        // Con Mercado Pago conectado, el pago deja de ser una promesa: el bot genera
+        // un link propio para esa paciente y le pregunta a la pasarela si de verdad pagó.
+        if (MercadoPagoService::fromConfig()->isConfigured()) {
             $tools[] = [
                 'name' => 'generar_link_pago',
                 'description' => 'Genera un link de pago ÚNICO para esta paciente y devuelve la URL para compartirle. Úsala cuando ya acordaron día y hora y le vas a pedir el pago de la valoración. No inventes links: usa siempre el que devuelva esta herramienta.',
@@ -485,13 +485,13 @@ class BotService
      */
     private function toolPaymentLink(array $input): string
     {
-        $bold = BoldService::fromConfig();
+        $pasarela = MercadoPagoService::fromConfig();
         $monto = Settings::valoracionAmount();
         $concepto = trim((string) ($input['concepto'] ?? '')) ?: 'Valoración médica';
 
         $referencia = 'conv-'.($this->conversation?->id ?? 0).'-'.now()->timestamp;
 
-        $link = $bold->createLink(
+        $link = $pasarela->createLink(
             $monto,
             $referencia,
             $concepto,
@@ -503,7 +503,7 @@ class BotService
             'user_id' => $this->user->id,
             'conversation_id' => $this->conversation?->id,
             'lead_id' => $this->conversation?->lead_id,
-            'reference' => BoldService::sanitizeReference($referencia),
+            'reference' => MercadoPagoService::sanitizeReference($referencia),
             'payment_link' => $link['payment_link'],
             'url' => $link['url'],
             'amount' => $monto,
@@ -515,7 +515,7 @@ class BotService
         $formateado = '$'.number_format($monto, 0, ',', '.');
 
         return "Link de pago generado por {$formateado} ({$concepto}). Compártele EXACTAMENTE esta URL: {$link['url']} "
-            .'Dile que puede pagar con tarjeta, PSE, Botón Bancolombia o Nequi, y que te avise cuando termine para confirmarle la cita.';
+            .'Dile que puede pagar con tarjeta débito o crédito, PSE o Efecty, y que te avise cuando termine para confirmarle la cita.';
     }
 
     /**
@@ -534,19 +534,30 @@ class BotService
             return 'PAGO CONFIRMADO. Ya puedes agendar la cita.';
         }
 
-        $estado = BoldService::fromConfig()->linkStatus($link->payment_link);
+        // Se consulta por la referencia y no por la preferencia: una misma
+        // preferencia puede acumular varios intentos y lo que importa es si
+        // alguno quedó aprobado.
+        $estado = MercadoPagoService::fromConfig()->linkStatus($link->reference);
+
+        // Si nadie pagó y el link ya venció, hay que generar uno nuevo.
+        $vencido = $estado['status'] === 'PENDING'
+            && $link->expires_at
+            && $link->expires_at->isPast();
+
+        $final = $vencido ? 'EXPIRED' : $estado['status'];
 
         $link->forceFill([
-            'status' => $estado['status'],
+            'status' => $final,
             'payment_method' => $estado['payment_method'],
-            'paid_at' => $estado['status'] === PaymentLink::PAGADO ? now() : null,
+            'paid_at' => $final === PaymentLink::PAGADO ? now() : null,
             'checked_at' => now(),
         ])->save();
 
-        return match ($estado['status']) {
+        return match ($final) {
             'PAID' => 'PAGO CONFIRMADO. Ya puedes agendar la cita.',
             'PROCESSING' => 'El pago está en proceso, todavía no se confirma. Pídele que espere un momento y vuelve a verificar; NO agendes aún.',
             'REJECTED' => 'El pago fue RECHAZADO. Avísale con amabilidad y ofrécele intentar de nuevo con el mismo link u otro medio de pago. NO agendes.',
+            'REFUNDED' => 'El pago fue devuelto o revertido, así que la cita no está cubierta. Avísale con amabilidad. NO agendes.',
             'EXPIRED', 'CANCELLED' => 'El link venció o fue cancelado. Genera uno nuevo con generar_link_pago. NO agendes.',
             default => 'El pago AÚN NO figura como realizado. No agendes todavía; dile con amabilidad que en cuanto se refleje le confirmas la cita.',
         };
@@ -572,7 +583,7 @@ class BotService
         // Con la pasarela conectada, el pago deja de depender de la palabra de
         // la paciente ni de que el modelo respete el prompt: si no hay un link
         // pagado de verdad, aquí no se agenda.
-        if (BoldService::fromConfig()->isConfigured()) {
+        if (MercadoPagoService::fromConfig()->isConfigured()) {
             $link = $this->latestPaymentLink();
 
             if (! $link) {
@@ -756,7 +767,7 @@ class BotService
         $campaignBlock = $campaign ? $this->campaignPrompt($campaign) : '';
 
         $valoracionLinkLine = filled($c['clinic_payment_link'] ?? null)
-            ? "\n- Link para pagar la valoración en línea (Bold): {$c['clinic_payment_link']}"
+            ? "\n- Link para pagar la valoración en línea: {$c['clinic_payment_link']}"
             : '';
         $landingLine = filled($c['clinic_landing'] ?? null)
             ? "\n- Página web con más información: {$c['clinic_landing']}"
@@ -792,9 +803,9 @@ class BotService
         - Formas de pago: {$c['clinic_payment']}{$landingLine}{$valoracionLinkLine}
 
         # Pagos
-        - Para pagar la valoración ofrece SIEMPRE primero el link de pago en línea (Bold): es el medio preferido y el más seguro.
+        - Para pagar la valoración ofrece SIEMPRE primero el link de pago en línea: es el medio preferido y el más seguro.
         - Comparte los datos de transferencia, consignación o Nequi SOLO si el paciente los pide expresamente o te dice que no puede usar el link. No los ofrezcas de entrada ni los repitas si ya los enviaste en esta conversación.
-        - El link de Bold NO es una forma de pago genérica: es EXCLUSIVAMENTE para pagar la valoración. Nunca lo ofrezcas para pagar tratamientos u otros servicios.
+        - El link de pago NO es una forma de pago genérica: es EXCLUSIVAMENTE para pagar la valoración. Nunca lo ofrezcas para pagar tratamientos u otros servicios.
         - Cuando compartas el link o los datos, cópialos EXACTAMENTE como aparecen arriba, sin acortarlos ni cambiar un solo número. Nunca inventes cuentas, llaves ni links que no estén en esta información.
         - NUNCA le pidas al paciente el número de su tarjeta, su cuenta bancaria, su documento de identidad, claves ni códigos de verificación. No los necesitas para nada.
 
@@ -885,11 +896,11 @@ class BotService
 
         // Con pasarela conectada el pago se genera y se comprueba de verdad;
         // sin ella, seguimos con el link fijo y la palabra del paciente.
-        $pagoBlock = BoldService::fromConfig()->isConfigured()
+        $pagoBlock = MercadoPagoService::fromConfig()->isConfigured()
             ? "\n        - Genera su link de pago con generar_link_pago (es único para ella) y compártele EXACTAMENTE la URL que devuelva. Nunca inventes ni reutilices links de otras pacientes."
                 ."\n        - Cuando diga que ya pagó, comprueba SIEMPRE con verificar_pago antes de agendar. Si el pago no está confirmado, no agendes: dile con amabilidad que aún no se refleja y que apenas entre le confirmas la cita."
-                ."\n        - El link acepta tarjeta, PSE, Botón Bancolombia y Nequi, así que no necesitas dar datos de cuentas bancarias."
-            : "\n        - Compártele el link de pago en línea (Bold) y pídele que te AVISE por este chat cuando ya lo haya hecho."
+                ."\n        - El link acepta tarjeta débito o crédito, PSE y Efecty, así que no necesitas dar datos de cuentas bancarias."
+            : "\n        - Compártele el link de pago en línea y pídele que te AVISE por este chat cuando ya lo haya hecho."
                 ."\n        - Considera el pago confirmado si te lo dice de forma clara y explícita.";
 
         return <<<PROMPT

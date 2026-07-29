@@ -14,26 +14,26 @@ const breadcrumbs: BreadcrumbItem[] = [{ title: 'Pagos', href: '/settings/pagos'
 
 interface Props {
     connected: boolean;
-    identityHint: string | null;
-    hasSecret: boolean;
+    tokenHint: string | null;
+    hasPublicKey: boolean;
     valoracionAmount: number;
     methods: string[];
 }
 
 const etiquetaMedio: Record<string, string> = {
-    CREDIT_CARD: 'Tarjeta',
-    PSE: 'PSE',
-    BOTON_BANCOLOMBIA: 'Botón Bancolombia',
-    NEQUI: 'Nequi',
+    credit_card: 'Tarjeta de crédito',
+    debit_card: 'Tarjeta débito',
+    bank_transfer: 'PSE',
+    ticket: 'Efecty',
 };
 
-export default function PaymentSettings({ connected, identityHint, hasSecret, valoracionAmount, methods }: Props) {
+export default function PaymentSettings({ connected, tokenHint, hasPublicKey, valoracionAmount, methods }: Props) {
     const { flash } = usePage<SharedData>().props;
     const [testing, setTesting] = useState(false);
 
     const { data, setData, put, processing, errors } = useForm({
-        identity_key: '',
-        secret_key: '',
+        access_token: '',
+        public_key: '',
         valoracion_amount: valoracionAmount,
     });
 
@@ -42,8 +42,8 @@ export default function PaymentSettings({ connected, identityHint, hasSecret, va
         put(route('payments.update'), {
             preserveScroll: true,
             onSuccess: () => {
-                setData('identity_key', '');
-                setData('secret_key', '');
+                setData('access_token', '');
+                setData('public_key', '');
             },
         });
     };
@@ -54,7 +54,7 @@ export default function PaymentSettings({ connected, identityHint, hasSecret, va
     };
 
     const desconectar = () => {
-        if (confirm('¿Desconectar Bold? El asistente volverá a pedir el pago sin poder comprobarlo.')) {
+        if (confirm('¿Desconectar Mercado Pago? El asistente volverá a pedir el pago sin poder comprobarlo.')) {
             router.delete(route('payments.destroy'), { preserveScroll: true });
         }
     };
@@ -66,8 +66,8 @@ export default function PaymentSettings({ connected, identityHint, hasSecret, va
             <SettingsLayout>
                 <div className="space-y-6">
                     <HeadingSmall
-                        title="Pagos en línea (Bold)"
-                        description="Conecta tu cuenta de Bold para que el asistente genere un link de pago propio de cada paciente y confirme el pago antes de apartar el cupo."
+                        title="Pagos en línea (Mercado Pago)"
+                        description="Conecta tu cuenta de Mercado Pago para que el asistente genere un link de pago propio de cada paciente y confirme el pago antes de apartar el cupo."
                     />
 
                     {flash?.success && (
@@ -84,8 +84,8 @@ export default function PaymentSettings({ connected, identityHint, hasSecret, va
                         <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm">
                             <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" />
                             <span>
-                                Bold conectado. Llave de identidad <code className="rounded bg-muted px-1.5 py-0.5">{identityHint}</code>
-                                {hasSecret ? ' · llave secreta guardada' : ' · sin llave secreta (no hace falta para cobrar)'}
+                                Mercado Pago conectado. Access token <code className="rounded bg-muted px-1.5 py-0.5">{tokenHint}</code>
+                                {hasPublicKey ? ' · public key guardada' : ' · sin public key (no hace falta para cobrar)'}
                             </span>
                         </div>
                     ) : (
@@ -100,36 +100,37 @@ export default function PaymentSettings({ connected, identityHint, hasSecret, va
 
                     <form onSubmit={save} className="space-y-5">
                         <div className="grid gap-2">
-                            <Label htmlFor="identity_key">Llave de identidad</Label>
+                            <Label htmlFor="access_token">Access token</Label>
                             <Input
-                                id="identity_key"
-                                value={data.identity_key}
-                                onChange={(e) => setData('identity_key', e.target.value)}
-                                placeholder={connected ? 'Pega una nueva llave para reemplazarla…' : 'Llave de identidad de Bold'}
+                                id="access_token"
+                                type="password"
+                                value={data.access_token}
+                                onChange={(e) => setData('access_token', e.target.value)}
+                                placeholder={connected ? 'Pega uno nuevo para reemplazarlo…' : 'APP_USR-…'}
                                 autoComplete="off"
                             />
                             <p className="text-xs text-muted-foreground">
-                                Está en panel.bold.co → Integraciones → Llaves de integración → API pagos en línea. Usa la de <strong>pruebas</strong>{' '}
-                                para ensayar sin dinero real, o la de <strong>producción</strong> para cobrar de verdad.
+                                Está en mercadopago.com.co → Tu negocio → Configuración → Gestión y administración → Credenciales. Usa las de{' '}
+                                <strong>prueba</strong> para ensayar sin dinero real, o las de <strong>producción</strong> para cobrar de verdad. Se
+                                guarda cifrado.
                             </p>
-                            <InputError message={errors.identity_key} />
+                            <InputError message={errors.access_token} />
                         </div>
 
                         <div className="grid gap-2">
-                            <Label htmlFor="secret_key">Llave secreta (opcional)</Label>
+                            <Label htmlFor="public_key">Public key (opcional)</Label>
                             <Input
-                                id="secret_key"
-                                type="password"
-                                value={data.secret_key}
-                                onChange={(e) => setData('secret_key', e.target.value)}
-                                placeholder={hasSecret ? 'Guardada. Pega una nueva para reemplazarla…' : 'Llave secreta de Bold'}
+                                id="public_key"
+                                value={data.public_key}
+                                onChange={(e) => setData('public_key', e.target.value)}
+                                placeholder={hasPublicKey ? 'Guardada. Pega una nueva para reemplazarla…' : 'APP_USR-…'}
                                 autoComplete="off"
                             />
                             <p className="text-xs text-muted-foreground">
-                                Se guarda cifrada. Hoy no es necesaria para cobrar; sirve para validar las notificaciones automáticas de Bold si algún
-                                día se activan.
+                                Hoy no es necesaria: la paciente paga abriendo el link desde WhatsApp. Sirve si algún día el cobro se hace dentro de
+                                la propia página.
                             </p>
-                            <InputError message={errors.secret_key} />
+                            <InputError message={errors.public_key} />
                         </div>
 
                         <div className="grid gap-2">
@@ -144,7 +145,7 @@ export default function PaymentSettings({ connected, identityHint, hasSecret, va
                             />
                             <p className="text-xs text-muted-foreground">
                                 Es lo que se le cobra a la paciente para apartar el cupo. Cada link se genera por este monto, así que cambiarlo aquí
-                                basta: ya no hay que crear un link nuevo en Bold.
+                                basta: no hay que crear nada en Mercado Pago.
                             </p>
                             <InputError message={errors.valoracion_amount} />
                         </div>
@@ -162,7 +163,7 @@ export default function PaymentSettings({ connected, identityHint, hasSecret, va
 
                             {connected && (
                                 <button type="button" onClick={desconectar} className="text-sm text-destructive hover:underline">
-                                    Desconectar Bold
+                                    Desconectar Mercado Pago
                                 </button>
                             )}
                         </div>
@@ -179,7 +180,7 @@ export default function PaymentSettings({ connected, identityHint, hasSecret, va
                         </div>
                         <p className="mt-3 text-xs text-muted-foreground">
                             Al pagar por el link, cualquiera de estos medios queda confirmado automáticamente. Las transferencias hechas por fuera de
-                            Bold no se pueden verificar.
+                            Mercado Pago no se pueden verificar.
                         </p>
                     </div>
                 </div>

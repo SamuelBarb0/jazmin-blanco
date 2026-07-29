@@ -18,8 +18,8 @@ class Settings
     private const KEY_GOOGLE_CALENDAR = 'google_calendar_id';
     private const KEY_GOOGLE_TIMEZONE = 'google_timezone';
     private const KEY_GOOGLE_OAUTH = 'google_oauth';
-    private const KEY_BOLD_IDENTITY = 'bold_identity_key';
-    private const KEY_BOLD_SECRET = 'bold_secret_key';
+    private const KEY_MP_ACCESS_TOKEN = 'mp_access_token';
+    private const KEY_MP_PUBLIC_KEY = 'mp_public_key';
 
     public static function get(string $key, ?string $default = null): ?string
     {
@@ -253,42 +253,42 @@ class Settings
     }
 
     /**
-     * Llaves de integración de Bold (pagos en línea).
+     * Credenciales de Mercado Pago (pagos en línea).
      *
-     * Se guardan cifradas, como la de Anthropic. La de IDENTIDAD es la que usa
-     * la API para crear y consultar links; la SECRETA solo hace falta para
-     * validar la firma de los webhooks, si algún día se activan.
+     * Se guardan cifradas, como la de Anthropic. El ACCESS TOKEN es el que usa
+     * la API para crear preferencias y consultar pagos; la PUBLIC KEY solo hace
+     * falta si algún día se embebe el checkout en el navegador.
      */
-    public static function boldIdentityKey(): ?string
+    public static function mpAccessToken(): ?string
     {
-        return self::decrypt(self::KEY_BOLD_IDENTITY);
+        return self::decrypt(self::KEY_MP_ACCESS_TOKEN);
     }
 
-    public static function boldSecretKey(): ?string
+    public static function mpPublicKey(): ?string
     {
-        return self::decrypt(self::KEY_BOLD_SECRET);
+        return self::decrypt(self::KEY_MP_PUBLIC_KEY);
     }
 
-    public static function setBold(?string $identity, ?string $secret): void
+    public static function setMercadoPago(?string $accessToken, ?string $publicKey): void
     {
-        if (filled($identity)) {
-            self::put(self::KEY_BOLD_IDENTITY, Crypt::encryptString($identity));
+        if (filled($accessToken)) {
+            self::put(self::KEY_MP_ACCESS_TOKEN, Crypt::encryptString($accessToken));
         }
 
-        if (filled($secret)) {
-            self::put(self::KEY_BOLD_SECRET, Crypt::encryptString($secret));
+        if (filled($publicKey)) {
+            self::put(self::KEY_MP_PUBLIC_KEY, Crypt::encryptString($publicKey));
         }
     }
 
-    public static function clearBold(): void
+    public static function clearMercadoPago(): void
     {
-        self::put(self::KEY_BOLD_IDENTITY, null);
-        self::put(self::KEY_BOLD_SECRET, null);
+        self::put(self::KEY_MP_ACCESS_TOKEN, null);
+        self::put(self::KEY_MP_PUBLIC_KEY, null);
     }
 
-    public static function hasBold(): bool
+    public static function hasMercadoPago(): bool
     {
-        return filled(self::boldIdentityKey());
+        return filled(self::mpAccessToken());
     }
 
     /** Valor de la valoración que se le cobra a la paciente para apartar el cupo. */

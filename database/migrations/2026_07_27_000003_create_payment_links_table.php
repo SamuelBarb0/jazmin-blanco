@@ -7,9 +7,9 @@ use Illuminate\Support\Facades\Schema;
 /**
  * Links de pago generados para cada paciente.
  *
- * Cada link lleva una `reference` propia, así que cuando Bold confirma un pago
- * sabemos exactamente de quién era. Sin esto no se puede saber quién pagó: el
- * link fijo de antes era el mismo para todo el mundo.
+ * Cada link lleva una `reference` propia, así que cuando la pasarela confirma un
+ * pago sabemos exactamente de quién era. Sin esto no se puede saber quién pagó:
+ * el link fijo de antes era el mismo para todo el mundo.
  */
 return new class extends Migration
 {
@@ -21,9 +21,9 @@ return new class extends Migration
             $table->foreignId('conversation_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('lead_id')->nullable()->constrained()->nullOnDelete();
 
-            $table->string('reference')->unique();          // lo que mandamos a Bold
-            $table->string('payment_link')->index();        // LNK_xxxx que devuelve Bold
-            $table->string('url');
+            $table->string('reference')->unique();          // external_reference que mandamos a la pasarela
+            $table->string('payment_link')->index();        // id de la preferencia que devuelve la pasarela
+            $table->string('url');                          // init_point: la URL que se le comparte a la paciente
             $table->unsignedBigInteger('amount');
             $table->string('description')->nullable();
 

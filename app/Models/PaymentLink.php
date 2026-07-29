@@ -7,7 +7,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PaymentLink extends Model
 {
-    /** Estados que devuelve Bold. */
+    /**
+     * Vocabulario interno de estados, al que se traducen los de la pasarela:
+     * ACTIVE | PENDING | PROCESSING | PAID | REJECTED | CANCELLED | EXPIRED | REFUNDED
+     */
     public const PAGADO = 'PAID';
 
     protected $fillable = [
