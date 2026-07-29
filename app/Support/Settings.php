@@ -291,6 +291,27 @@ class Settings
         return filled(self::mpAccessToken());
     }
 
+    /**
+     * Interruptor general del bot en WhatsApp.
+     *
+     * Es distinto de la pausa por chat (`conversations.bot_enabled`): esto apaga
+     * a Lore para TODAS las pacientes de una vez. Los mensajes entrantes se
+     * siguen guardando y apareciendo en la bandeja; lo único que no ocurre es la
+     * respuesta automática.
+     *
+     * Por defecto está APAGADO a propósito: conectar el webhook no debe empezar
+     * a escribirle a pacientes reales sin que alguien lo decida.
+     */
+    public static function whatsappBotEnabled(): bool
+    {
+        return self::get('whatsapp_bot_enabled') === '1';
+    }
+
+    public static function setWhatsappBotEnabled(bool $enabled): void
+    {
+        self::put('whatsapp_bot_enabled', $enabled ? '1' : '0');
+    }
+
     /** Valor de la valoración que se le cobra a la paciente para apartar el cupo. */
     public static function valoracionAmount(): int
     {

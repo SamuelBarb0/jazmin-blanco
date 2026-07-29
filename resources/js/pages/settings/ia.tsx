@@ -8,7 +8,7 @@ import AppLayout from '@/layouts/app-layout';
 import SettingsLayout from '@/layouts/settings/layout';
 import { type BreadcrumbItem, type SharedData } from '@/types';
 import { Head, router, useForm, usePage } from '@inertiajs/react';
-import { CheckCircle2, KeyRound, LoaderCircle, Sparkles } from 'lucide-react';
+import { CheckCircle2, KeyRound, LoaderCircle, MessageCircle, PauseCircle, Sparkles } from 'lucide-react';
 import { FormEventHandler, useState } from 'react';
 
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Integración IA', href: '/settings/ia' }];
@@ -38,9 +38,10 @@ interface IaProps {
     model: string;
     models: string[];
     bot: BotConfig;
+    whatsappBotEnabled: boolean;
 }
 
-export default function IaSettings({ configured, keyPreview, fromEnv, model, models, bot }: IaProps) {
+export default function IaSettings({ configured, keyPreview, fromEnv, model, models, bot, whatsappBotEnabled }: IaProps) {
     const { flash } = usePage<SharedData>().props;
     const [testing, setTesting] = useState(false);
 
@@ -71,6 +72,17 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
         }
     };
 
+    const alternarWhatsapp = () => {
+        const encendiendo = !whatsappBotEnabled;
+        const aviso = encendiendo
+            ? `¿Encender a ${bot.bot_name || 'Lore'} en WhatsApp? A partir de ahora responderá sola a las pacientes que escriban.`
+            : `¿Poner a ${bot.bot_name || 'Lore'} en pausa? Los mensajes se seguirán recibiendo, pero nadie recibirá respuesta automática.`;
+
+        if (confirm(aviso)) {
+            router.put(route('ai.whatsapp'), { enabled: encendiendo }, { preserveScroll: true });
+        }
+    };
+
     return (
         <AppLayout breadcrumbs={breadcrumbs}>
             <Head title="Integración IA" />
@@ -80,6 +92,41 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
                         title="Integración con IA (Claude)"
                         description="Conecta tu cuenta de Anthropic para que el sistema genere contenido y, próximamente, responda a tus pacientes."
                     />
+
+                    {/* Interruptor general del bot en WhatsApp */}
+                    <div
+                        className={`rounded-xl border px-4 py-4 ${
+                            whatsappBotEnabled
+                                ? 'border-emerald-300/50 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10'
+                                : 'border-amber-300/60 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10'
+                        }`}
+                    >
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                            <div className="flex items-start gap-3">
+                                {whatsappBotEnabled ? (
+                                    <MessageCircle className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                                ) : (
+                                    <PauseCircle className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                                )}
+                                <div className="text-sm">
+                                    <p className={`font-medium ${whatsappBotEnabled ? 'text-emerald-800 dark:text-emerald-300' : 'text-amber-800 dark:text-amber-300'}`}>
+                                        {whatsappBotEnabled
+                                            ? `${bot.bot_name || 'Lore'} está respondiendo por WhatsApp`
+                                            : `${bot.bot_name || 'Lore'} está en pausa`}
+                                    </p>
+                                    <p className={whatsappBotEnabled ? 'text-emerald-700/90 dark:text-emerald-400/90' : 'text-amber-700/90 dark:text-amber-400/90'}>
+                                        {whatsappBotEnabled
+                                            ? 'Cada paciente que escriba recibe respuesta automática. Puedes pausar un chat concreto desde la bandeja.'
+                                            : 'Los mensajes se reciben y quedan en la bandeja, pero nadie recibe respuesta automática. Puedes responder tú a mano.'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <Button type="button" variant={whatsappBotEnabled ? 'outline' : 'default'} onClick={alternarWhatsapp}>
+                                {whatsappBotEnabled ? 'Poner en pausa' : 'Encender'}
+                            </Button>
+                        </div>
+                    </div>
 
                     {/* Estado actual */}
                     {configured ? (

@@ -26,7 +26,25 @@ class AiSettingsController extends Controller
             'model' => Settings::anthropicModel(),
             'models' => self::MODELS,
             'bot' => Settings::botConfig(),
+            'whatsappBotEnabled' => Settings::whatsappBotEnabled(),
         ]);
+    }
+
+    /**
+     * Enciende o apaga a Lore en WhatsApp para todas las pacientes.
+     * Con el bot apagado los mensajes se siguen recibiendo y guardando.
+     */
+    public function updateWhatsappBot(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'enabled' => ['required', 'boolean'],
+        ]);
+
+        Settings::setWhatsappBotEnabled($data['enabled']);
+
+        return back()->with('success', $data['enabled']
+            ? 'Lore está respondiendo por WhatsApp.'
+            : 'Lore quedó en pausa: los mensajes se siguen recibiendo, pero no se responden.');
     }
 
     public function updateBot(Request $request): RedirectResponse

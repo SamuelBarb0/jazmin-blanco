@@ -28,6 +28,7 @@ Route::middleware('auth')->group(function () {
     Route::delete('settings/ia', [AiSettingsController::class, 'destroy'])->name('ai.destroy');
     Route::post('settings/ia/test', [AiSettingsController::class, 'test'])->name('ai.test');
     Route::put('settings/ia/bot', [AiSettingsController::class, 'updateBot'])->name('ai.bot');
+    Route::put('settings/ia/whatsapp', [AiSettingsController::class, 'updateWhatsappBot'])->name('ai.whatsapp');
 
     // Pagos en línea (Mercado Pago)
     Route::get('settings/pagos', [PaymentSettingsController::class, 'edit'])->name('payments.edit');

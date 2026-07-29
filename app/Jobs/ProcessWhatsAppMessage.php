@@ -8,6 +8,7 @@ use App\Services\BotService;
 use App\Services\MetaAdsService;
 use App\Services\WhatsAppService;
 use App\Support\PatientLeads;
+use App\Support\Settings;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -111,6 +112,18 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 'role' => 'user',
                 'content' => $this->text,
             ]);
+
+            // Interruptor general: con el bot apagado el mensaje queda guardado y
+            // visible en la bandeja, pero no se le responde a nadie. Sirve para
+            // conectar el webhook sin que Lore empiece a escribirle a pacientes
+            // reales, y como botón de pánico si algo se tuerce.
+            if (! Settings::whatsappBotEnabled()) {
+                Log::info('Mensaje de WhatsApp recibido con el bot apagado; no se responde.', [
+                    'conversation_id' => $conversation->id,
+                ]);
+
+                return;
+            }
 
             // La doctora tomó el control de este chat: el mensaje queda guardado
             // y visible en la bandeja, pero el asistente no contesta.
