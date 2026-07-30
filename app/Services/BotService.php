@@ -776,7 +776,12 @@ class BotService
         // Hay pago en línea si la pasarela genera un link por paciente o si
         // quedó configurado un link fijo a mano. Sin ninguno de los dos, el bot
         // no debe ofrecer ni mencionar links: solo los datos bancarios.
-        $pagoEnLinea = MercadoPagoService::fromConfig()->isConfigured()
+        //
+        // Ojo con Mercado Pago: el link lo produce generar_link_pago, y esa
+        // herramienta solo existe si canSchedule(). Con la agenda caída (OAuth
+        // vencido, por ejemplo) la pasarela está configurada pero el bot NO
+        // tiene cómo generar el link, así que no debe ofrecerlo.
+        $pagoEnLinea = ($this->canSchedule() && MercadoPagoService::fromConfig()->isConfigured())
             || filled($c['clinic_payment_link'] ?? null);
 
         // Ojo: el heredoc desindenta el literal, no lo interpolado. Estas líneas
