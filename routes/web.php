@@ -7,6 +7,7 @@ use App\Http\Controllers\CampaignMediaController;
 use App\Http\Controllers\InboxController;
 use App\Http\Controllers\KnowledgeController;
 use App\Http\Controllers\LeadController;
+use App\Http\Controllers\LegalController;
 use App\Http\Controllers\PipelineController;
 use App\Http\Controllers\ServiceController;
 use App\Http\Controllers\ServiceMediaController;
@@ -16,6 +17,11 @@ use Inertia\Inertia;
 Route::get('/', function () {
     return Inertia::render('welcome');
 })->name('home');
+
+// Páginas legales públicas. Meta las exige para publicar la app de WhatsApp.
+Route::get('privacidad', [LegalController::class, 'privacidad'])->name('legal.privacidad');
+Route::get('terminos', [LegalController::class, 'terminos'])->name('legal.terminos');
+Route::get('eliminacion-de-datos', [LegalController::class, 'eliminacion'])->name('legal.eliminacion');
 
 Route::middleware(['auth'])->group(function () {
     Route::get('dashboard', [ServiceController::class, 'dashboard'])->name('dashboard');
