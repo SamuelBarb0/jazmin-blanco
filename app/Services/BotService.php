@@ -773,6 +773,21 @@ class BotService
             ? "\n- Página web con más información: {$c['clinic_landing']}"
             : '';
 
+        // Hay pago en línea si la pasarela genera un link por paciente o si
+        // quedó configurado un link fijo a mano. Sin ninguno de los dos, el bot
+        // no debe ofrecer ni mencionar links: solo los datos bancarios.
+        $pagoEnLinea = MercadoPagoService::fromConfig()->isConfigured()
+            || filled($c['clinic_payment_link'] ?? null);
+
+        // Ojo: el heredoc desindenta el literal, no lo interpolado. Estas líneas
+        // van sin sangría para que el prompt quede alineado.
+        $prioridadPagoLines = $pagoEnLinea
+            ? "- Para pagar la valoración ofrece SIEMPRE primero el link de pago en línea: es el medio preferido y el más seguro."
+                ."\n- Comparte los datos de transferencia, consignación o Nequi SOLO si el paciente los pide expresamente o te dice que no puede usar el link. No los ofrezcas de entrada ni los repitas si ya los enviaste en esta conversación."
+                ."\n- El link de pago NO es una forma de pago genérica: es EXCLUSIVAMENTE para pagar la valoración. Nunca lo ofrezcas para pagar tratamientos u otros servicios."
+            : "- Para pagar la valoración comparte los datos de transferencia, consignación o Nequi que aparecen arriba, y pídele que te AVISE por este chat cuando lo haya hecho."
+                ."\n- NO hay link de pago en línea disponible: no lo menciones, no lo prometas y NUNCA inventes uno.";
+
         return <<<PROMPT
         Eres {$c['bot_name']}, asistente virtual de {$c['clinic_name']}, un consultorio de medicina estética premium dirigido por la Dra. Jasmin Blanco. Atiendes a pacientes por WhatsApp e Instagram con calidez y profesionalismo, como lo haría una asesora humana experimentada.
         {$campaignBlock}
@@ -803,10 +818,8 @@ class BotService
         - Formas de pago: {$c['clinic_payment']}{$landingLine}{$valoracionLinkLine}
 
         # Pagos
-        - Para pagar la valoración ofrece SIEMPRE primero el link de pago en línea: es el medio preferido y el más seguro.
-        - Comparte los datos de transferencia, consignación o Nequi SOLO si el paciente los pide expresamente o te dice que no puede usar el link. No los ofrezcas de entrada ni los repitas si ya los enviaste en esta conversación.
-        - El link de pago NO es una forma de pago genérica: es EXCLUSIVAMENTE para pagar la valoración. Nunca lo ofrezcas para pagar tratamientos u otros servicios.
-        - Cuando compartas el link o los datos, cópialos EXACTAMENTE como aparecen arriba, sin acortarlos ni cambiar un solo número. Nunca inventes cuentas, llaves ni links que no estén en esta información.
+        {$prioridadPagoLines}
+        - Cuando compartas el link o los datos, cópialos EXACTAMENTE como los recibiste, sin acortarlos ni cambiar un solo número. Nunca inventes cuentas, llaves ni links: usa únicamente los que aparecen en esta información o los que te devuelva una herramienta.
         - NUNCA le pidas al paciente el número de su tarjeta, su cuenta bancaria, su documento de identidad, claves ni códigos de verificación. No los necesitas para nada.
 
         # Reglas importantes (cumplimiento sanitario)
@@ -894,14 +907,21 @@ class BotService
         $tz = Settings::googleTimezone();
         $hoy = Carbon::now($tz)->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY');
 
-        // Con pasarela conectada el pago se genera y se comprueba de verdad;
-        // sin ella, seguimos con el link fijo y la palabra del paciente.
-        $pagoBlock = MercadoPagoService::fromConfig()->isConfigured()
-            ? "\n        - Genera su link de pago con generar_link_pago (es único para ella) y compártele EXACTAMENTE la URL que devuelva. Nunca inventes ni reutilices links de otras pacientes."
+        // Con pasarela conectada el pago se genera y se comprueba de verdad.
+        // Sin ella caemos en la palabra de la paciente, y el medio depende de si
+        // quedó un link fijo configurado: si no hay ninguno, solo datos bancarios.
+        if (MercadoPagoService::fromConfig()->isConfigured()) {
+            $pagoBlock = "\n        - Genera su link de pago con generar_link_pago (es único para ella) y compártele EXACTAMENTE la URL que devuelva. Nunca inventes ni reutilices links de otras pacientes."
                 ."\n        - Cuando diga que ya pagó, comprueba SIEMPRE con verificar_pago antes de agendar. Si el pago no está confirmado, no agendes: dile con amabilidad que aún no se refleja y que apenas entre le confirmas la cita."
-                ."\n        - El link acepta tarjeta débito o crédito, PSE y Efecty, así que no necesitas dar datos de cuentas bancarias."
-            : "\n        - Compártele el link de pago en línea y pídele que te AVISE por este chat cuando ya lo haya hecho."
+                ."\n        - El link acepta tarjeta débito o crédito, PSE y Efecty, así que no necesitas dar datos de cuentas bancarias.";
+        } else {
+            $medioPago = filled(Settings::botConfig()['clinic_payment_link'] ?? null)
+                ? 'Compártele el link de pago en línea'
+                : 'Compártele los datos de transferencia, consignación o Nequi que aparecen en la información de la clínica (no hay link de pago en línea: no lo menciones ni lo inventes)';
+
+            $pagoBlock = "\n        - {$medioPago} y pídele que te AVISE por este chat cuando ya lo haya hecho."
                 ."\n        - Considera el pago confirmado si te lo dice de forma clara y explícita.";
+        }
 
         return <<<PROMPT
         # Agendamiento de citas (tienes la agenda conectada)
