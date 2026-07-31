@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Conversation;
+use App\Models\Message;
 use App\Services\WhatsAppService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -21,14 +22,39 @@ use Inertia\Response;
  */
 class InboxController extends Controller
 {
+    /**
+     * Cuántos mensajes se le mandan al navegador por conversación.
+     *
+     * No es paginación de verdad: es un techo para que un chat largo no
+     * multiplique el peso de cada refresco. Lo anterior sigue en la base y en
+     * el celular de la paciente; si algún día hace falta consultarlo desde el
+     * CRM, esto se convierte en "cargar mensajes anteriores".
+     */
+    private const MAX_MENSAJES = 100;
+
     public function index(Request $request, ?Conversation $conversation = null): Response
     {
         $user = $request->user();
 
         $conversations = $user->conversations()
+            // Va ANTES de los withMax: `select()` reemplaza la lista de
+            // columnas, así que ponerlo después borraría sus agregados.
+            ->select('conversations.*')
             ->where('channel', '!=', 'panel')
             ->with(['lead:id,name,phone'])
             ->withMax('messages as last_message_at', 'created_at')
+            // El id del último mensaje deja que el frontend sepa si el chat
+            // abierto cambió sin recargarlo entero. Es un entero, así que la
+            // comparación no depende de formatos de fecha ni de zonas horarias.
+            ->withMax('messages as last_message_id', 'id')
+            // La vista previa iba con una consulta POR conversación. Con la
+            // bandeja refrescando cada 5 segundos ese N+1 escalaba fatal: 200
+            // chats serían 200 consultas cada 5 segundos. Ahora es una sola.
+            ->addSelect(['preview' => Message::select('content')
+                ->whereColumn('conversation_id', 'conversations.id')
+                ->latest('id')
+                ->limit(1),
+            ])
             ->orderByDesc('last_message_at')
             ->get()
             ->map(fn (Conversation $c) => [
@@ -39,7 +65,8 @@ class InboxController extends Controller
                 'bot_enabled' => $c->bot_enabled,
                 'needs_human' => $c->needsHuman(),
                 'last_message_at' => $c->last_message_at,
-                'preview' => $c->messages()->latest('id')->value('content'),
+                'last_message_id' => $c->last_message_id,
+                'preview' => $c->preview,
             ]);
 
         // Por defecto se abre la conversación más reciente, que en pantalla
@@ -178,6 +205,25 @@ class InboxController extends Controller
         $conversation->load('lead:id,name,phone');
         $ultimoEntrante = $conversation->lastInboundAt();
 
+        // Un chat largo se reenviaba ENTERO en cada refresco. A 5 segundos y
+        // desde el celular de la doctora eso es un desperdicio de datos que
+        // además crece sin techo, así que se manda solo el tramo reciente.
+        $total = $conversation->messages()->count();
+        $mensajes = $conversation->messages()
+            ->latest('id')
+            ->take(self::MAX_MENSAJES)
+            ->get()
+            ->reverse()
+            ->values()
+            ->map(fn ($m) => [
+                'id' => $m->id,
+                'role' => $m->role,
+                'sent_by' => $m->sent_by,
+                'content' => $m->content,
+                'media' => $m->media,
+                'created_at' => $m->created_at?->toIso8601String(),
+            ]);
+
         return [
             'id' => $conversation->id,
             'title' => $conversation->title ?: ($conversation->lead?->name ?: 'Sin nombre'),
@@ -194,15 +240,8 @@ class InboxController extends Controller
             ] : null,
             'window_open' => $conversation->windowIsOpen(),
             'window_closes_at' => $ultimoEntrante?->copy()->addDay()->toIso8601String(),
-            'messages' => $conversation->messages()->orderBy('id')->get()
-                ->map(fn ($m) => [
-                    'id' => $m->id,
-                    'role' => $m->role,
-                    'sent_by' => $m->sent_by,
-                    'content' => $m->content,
-                    'media' => $m->media,
-                    'created_at' => $m->created_at?->toIso8601String(),
-                ]),
+            'messages' => $mensajes,
+            'older_count' => max(0, $total - $mensajes->count()),
         ];
     }
 

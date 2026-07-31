@@ -37,6 +37,7 @@ interface ConversationRow {
     bot_enabled: boolean;
     needs_human: boolean;
     last_message_at: string | null;
+    last_message_id: number | null;
     preview: string | null;
 }
 
@@ -53,6 +54,7 @@ interface Selected {
     window_open: boolean;
     window_closes_at: string | null;
     messages: Msg[];
+    older_count: number;
 }
 
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Conversaciones', href: '/inbox' }];
@@ -98,27 +100,46 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
     // no existe en la base hasta que el cron levanta el worker—, así que bajar
     // esto sin tocar el cron no se nota apenas.
     useEffect(() => {
-        const id = setInterval(() => {
-            // Con la pestaña en segundo plano no hay a quién mostrarle nada, y
-            // el móvil agradece no gastar batería ni datos.
+        // Solo se pide la LISTA, que pesa poco. El chat abierto se recarga
+        // aparte y únicamente si cambió (ver el efecto de abajo): reenviarlo
+        // entero cada 5 segundos era el grueso del tráfico, y desde el celular
+        // de la doctora eso se paga en datos.
+        const refrescar = () => {
             if (document.visibilityState !== 'visible') return;
-
-            router.reload({ only: ['conversations', 'selected'] });
-        }, 5000);
-
-        // Al volver a la pestaña se refresca ya, sin esperar al siguiente ciclo.
-        const alVolver = () => {
-            if (document.visibilityState === 'visible') {
-                router.reload({ only: ['conversations', 'selected'] });
-            }
+            router.reload({ only: ['conversations'] });
         };
-        document.addEventListener('visibilitychange', alVolver);
+
+        const id = setInterval(refrescar, 5000);
+        // Al volver a la pestaña se refresca ya, sin esperar al siguiente ciclo.
+        document.addEventListener('visibilitychange', refrescar);
 
         return () => {
             clearInterval(id);
-            document.removeEventListener('visibilitychange', alVolver);
+            document.removeEventListener('visibilitychange', refrescar);
         };
     }, []);
+
+    // Trae el chat abierto solo cuando la lista delata un mensaje nuevo.
+    // Se compara por id (entero) y no por fecha: un desajuste de formato o de
+    // zona horaria dejaría la condición siempre en verdadero y la bandeja se
+    // recargaría en bucle.
+    const recargando = useRef(false);
+    useEffect(() => {
+        if (!selected || recargando.current) return;
+
+        const fila = conversations.find((c) => c.id === selected.id);
+        const ultimoCargado = selected.messages.at(-1)?.id ?? null;
+
+        if (!fila?.last_message_id || fila.last_message_id === ultimoCargado) return;
+
+        recargando.current = true;
+        router.reload({
+            only: ['selected'],
+            onFinish: () => {
+                recargando.current = false;
+            },
+        });
+    }, [conversations, selected]);
 
     const quitarArchivo = () => {
         setData('archivo', null);
@@ -290,6 +311,12 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                             )}
 
                             <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-4 md:px-5">
+                                {selected.older_count > 0 && (
+                                    <p className="text-center text-[11px] text-muted-foreground">
+                                        Hay {selected.older_count} mensaje{selected.older_count === 1 ? '' : 's'} anterior
+                                        {selected.older_count === 1 ? '' : 'es'} en esta conversación.
+                                    </p>
+                                )}
                                 {selected.messages.map((m) => {
                                     const mio = m.role === 'assistant';
 
