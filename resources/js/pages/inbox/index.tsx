@@ -3,14 +3,15 @@ import AppLayout from '@/layouts/app-layout';
 import { cn } from '@/lib/utils';
 import { type BreadcrumbItem, type SharedData } from '@/types';
 import { Head, router, useForm, usePage } from '@inertiajs/react';
-import { AlertTriangle, Bot, Clock, MessageCircle, Pause, Play, SendHorizonal, User } from 'lucide-react';
+import { AlertTriangle, Bot, Clock, FileText, MessageCircle, Paperclip, Pause, Play, SendHorizonal, User, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useRef } from 'react';
 
 interface ChatMedia {
-    type: 'image' | 'video';
+    type: 'image' | 'video' | 'audio' | 'document';
     url: string | null;
     caption?: string;
+    filename?: string;
 }
 
 interface Msg {
@@ -70,7 +71,11 @@ const hora = (iso: string | null): string =>
 export default function Inbox({ conversations, selected }: { conversations: ConversationRow[]; selected: Selected | null }) {
     const { flash } = usePage<SharedData>().props;
     const scrollRef = useRef<HTMLDivElement>(null);
-    const { data, setData, post, processing, reset } = useForm({ content: '' });
+    const archivoRef = useRef<HTMLInputElement>(null);
+    const { data, setData, post, processing, reset } = useForm<{ content: string; archivo: File | null }>({
+        content: '',
+        archivo: null,
+    });
 
     useEffect(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -86,10 +91,26 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
         return () => clearInterval(id);
     }, []);
 
+    const quitarArchivo = () => {
+        setData('archivo', null);
+        if (archivoRef.current) archivoRef.current.value = '';
+    };
+
     const enviar = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!selected || !data.content.trim()) return;
-        post(route('inbox.send', selected.id), { preserveScroll: true, onSuccess: () => reset('content') });
+        if (!selected) return;
+        // Con adjunto basta: la imagen puede ir sin texto.
+        if (!data.content.trim() && !data.archivo) return;
+
+        post(route('inbox.send', selected.id), {
+            preserveScroll: true,
+            // Obligatorio para que el archivo viaje como multipart.
+            forceFormData: true,
+            onSuccess: () => {
+                reset('content', 'archivo');
+                if (archivoRef.current) archivoRef.current.value = '';
+            },
+        });
     };
 
     const puedeEscribir = !!selected && selected.window_open && !!selected.lead?.phone;
@@ -203,8 +224,27 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                                                         <div key={i} className="overflow-hidden rounded-xl">
                                                             {media.type === 'video' ? (
                                                                 <video src={media.url} controls className="max-h-64 w-full" />
+                                                            ) : media.type === 'audio' ? (
+                                                                // Las notas de voz llegan en ogg/opus: el navegador las reproduce.
+                                                                <audio src={media.url} controls className="w-full" />
+                                                            ) : media.type === 'document' ? (
+                                                                <a
+                                                                    href={media.url}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="liquid-glass flex items-center gap-2 rounded-xl px-3 py-2 text-xs hover:underline"
+                                                                >
+                                                                    <FileText className="size-4 shrink-0" />
+                                                                    <span className="truncate">{media.filename || 'Abrir archivo'}</span>
+                                                                </a>
                                                             ) : (
-                                                                <img src={media.url} alt={media.caption ?? ''} className="max-h-64 w-full object-cover" />
+                                                                <a href={media.url} target="_blank" rel="noreferrer">
+                                                                    <img
+                                                                        src={media.url}
+                                                                        alt={media.caption ?? ''}
+                                                                        className="max-h-64 w-full object-cover"
+                                                                    />
+                                                                </a>
                                                             )}
                                                         </div>
                                                     ) : null,
@@ -247,7 +287,42 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                                     </div>
                                 )}
 
+                                {data.archivo && (
+                                    <div className="mb-2 flex items-center gap-2 rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-xs">
+                                        {data.archivo.type.startsWith('video/') ? (
+                                            <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                                        ) : (
+                                            <img
+                                                src={URL.createObjectURL(data.archivo)}
+                                                alt=""
+                                                className="size-9 shrink-0 rounded object-cover"
+                                            />
+                                        )}
+                                        <span className="flex-1 truncate">{data.archivo.name}</span>
+                                        <button type="button" onClick={quitarArchivo} className="text-muted-foreground hover:text-foreground">
+                                            <X className="size-4" />
+                                        </button>
+                                    </div>
+                                )}
+
                                 <form onSubmit={enviar} className="flex items-end gap-2">
+                                    <input
+                                        ref={archivoRef}
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp,video/mp4,video/3gpp"
+                                        className="hidden"
+                                        onChange={(e) => setData('archivo', e.target.files?.[0] ?? null)}
+                                    />
+                                    <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="outline"
+                                        disabled={!puedeEscribir || processing}
+                                        onClick={() => archivoRef.current?.click()}
+                                        title="Adjuntar imagen o video"
+                                    >
+                                        <Paperclip className="size-4" />
+                                    </Button>
                                     <textarea
                                         value={data.content}
                                         onChange={(e) => setData('content', e.target.value)}
@@ -261,12 +336,18 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                                         disabled={!puedeEscribir || processing}
                                         placeholder={
                                             puedeEscribir
-                                                ? 'Escribe tu respuesta… (Enter para enviar)'
+                                                ? data.archivo
+                                                    ? 'Agrega un texto para la imagen (opcional)…'
+                                                    : 'Escribe tu respuesta… (Enter para enviar)'
                                                 : 'No se le puede escribir en este momento'
                                         }
                                         className="max-h-32 flex-1 resize-none rounded-xl border border-border/60 bg-background/60 px-4 py-2.5 text-sm outline-none focus:border-primary/40 disabled:opacity-50"
                                     />
-                                    <Button type="submit" size="icon" disabled={!puedeEscribir || processing || !data.content.trim()}>
+                                    <Button
+                                        type="submit"
+                                        size="icon"
+                                        disabled={!puedeEscribir || processing || (!data.content.trim() && !data.archivo)}
+                                    >
                                         <SendHorizonal className="size-4" />
                                     </Button>
                                 </form>

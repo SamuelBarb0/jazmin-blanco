@@ -6,6 +6,8 @@ use App\Models\Conversation;
 use App\Services\WhatsAppService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -79,8 +81,19 @@ class InboxController extends Controller
         $this->authorizeConversation($request, $conversation);
 
         $data = $request->validate([
-            'content' => ['required', 'string', 'max:4000'],
+            'content' => ['nullable', 'string', 'max:4000'],
+            // WhatsApp acepta hasta 5 MB en imagen y 16 MB en video; nos
+            // quedamos en 15 MB y dejamos que Meta rechace el borde.
+            'archivo' => ['nullable', 'file', 'max:15360',
+                'mimetypes:image/jpeg,image/png,image/webp,video/mp4,video/3gpp'],
         ]);
+
+        $texto = trim((string) ($data['content'] ?? ''));
+        $adjunto = $request->file('archivo');
+
+        if ($texto === '' && ! $adjunto) {
+            return back()->with('error', 'Escribe un mensaje o adjunta una imagen.');
+        }
 
         $telefono = $conversation->lead?->phone;
         if (blank($telefono)) {
@@ -91,7 +104,32 @@ class InboxController extends Controller
             return back()->with('error', 'Pasaron más de 24 horas desde el último mensaje de la paciente. WhatsApp no permite escribirle texto libre hasta que ella vuelva a escribir.');
         }
 
-        $enviado = WhatsAppService::fromConfig()->sendText($telefono, $data['content']);
+        $whatsapp = WhatsAppService::fromConfig();
+        $media = [];
+
+        if ($adjunto) {
+            $ruta = $adjunto->store('whatsapp/'.$conversation->id, 'public');
+            $url = Storage::disk('public')->url($ruta);
+
+            // WhatsApp descarga el archivo por HTTP desde sus servidores, así
+            // que la URL tiene que ser absoluta y alcanzable desde fuera.
+            if (! Str::startsWith($url, ['http://', 'https://'])) {
+                $url = url($url);
+            }
+
+            $esVideo = Str::startsWith((string) $adjunto->getMimeType(), 'video/');
+
+            // El texto viaja como pie de la imagen: así llega un solo mensaje.
+            $enviado = $whatsapp->sendMedia($telefono, $esVideo ? 'video' : 'image', $url, $texto);
+
+            $media[] = [
+                'type' => $esVideo ? 'video' : 'image',
+                'url' => Storage::disk('public')->url($ruta),
+                'caption' => $texto,
+            ];
+        } else {
+            $enviado = $whatsapp->sendText($telefono, $texto);
+        }
 
         if (! $enviado) {
             return back()->with('error', 'No se pudo enviar el mensaje por WhatsApp. Revisa la conexión del número.');
@@ -102,7 +140,10 @@ class InboxController extends Controller
             // este entienda que ese mensaje salió de nuestro lado.
             'role' => 'assistant',
             'sent_by' => 'human',
-            'content' => $data['content'],
+            // Con adjunto y sin texto, se deja constancia de qué se mandó para
+            // que el asistente no lea un mensaje vacío al retomar el hilo.
+            'content' => $texto !== '' ? $texto : '[La doctora envió un archivo.]',
+            'media' => $media ?: null,
         ]);
 
         // Escribir a mano implica tomar el control: si el asistente seguía

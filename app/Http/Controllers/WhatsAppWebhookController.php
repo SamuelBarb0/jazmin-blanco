@@ -68,6 +68,7 @@ class WhatsAppWebhookController extends Controller
                         text: $this->extractText($message),
                         profileName: $profileName ? (string) $profileName : null,
                         referral: $this->extractReferral($message),
+                        media: $this->extractMedia($message),
                     );
                 }
             }
@@ -120,10 +121,54 @@ class WhatsAppWebhookController extends Controller
             // Imágenes/archivos: el paciente suele mandar la CAPTURA del
             // comprobante de pago. El bot no ve el contenido, pero sí que llegó
             // (para tratarlo como comprobante si están coordinando una cita).
+            // El archivo se descarga y se guarda aparte, para que la doctora sí
+            // pueda verlo en la bandeja.
             'image' => $this->mediaNote('una imagen', data_get($message, 'image.caption')),
             'document' => $this->mediaNote('un archivo', data_get($message, 'document.caption')),
+            // Voz y video: el bot no puede oírlos ni verlos, así que se le dice
+            // explícitamente para que pida el dato por escrito en vez de
+            // responder cualquier cosa. La doctora sí los tendrá en la bandeja.
+            'audio' => '[La paciente envió una nota de voz. No puedes escucharla: pídele con amabilidad que te lo escriba, y avísale que la doctora también la va a escuchar.]',
+            'video' => $this->videoNote(data_get($message, 'video.caption')),
             default => '',
         };
+    }
+
+    /**
+     * Archivo adjunto del mensaje, si trae uno. Solo el descriptor: la descarga
+     * ocurre en el job, porque el webhook debe responderle a Meta rápido.
+     *
+     * @param  array<string,mixed>  $message
+     * @return array{kind:string,id:string,mime:string,caption:string,filename:string}|null
+     */
+    private function extractMedia(array $message): ?array
+    {
+        $tipo = (string) data_get($message, 'type');
+
+        if (! in_array($tipo, ['image', 'video', 'audio', 'document'], true)) {
+            return null;
+        }
+
+        $id = data_get($message, "{$tipo}.id");
+        if (blank($id)) {
+            return null;
+        }
+
+        return [
+            'kind' => $tipo,
+            'id' => (string) $id,
+            'mime' => (string) data_get($message, "{$tipo}.mime_type", ''),
+            'caption' => (string) data_get($message, "{$tipo}.caption", ''),
+            'filename' => (string) data_get($message, "{$tipo}.filename", ''),
+        ];
+    }
+
+    private function videoNote(?string $caption): string
+    {
+        $note = '[La paciente envió un video. No puedes verlo: pregúntale de qué se trata, y avísale que la doctora sí lo va a revisar.]';
+        $caption = trim((string) $caption);
+
+        return $caption !== '' ? $note.' Lo acompaña este texto: '.$caption : $note;
     }
 
     /**

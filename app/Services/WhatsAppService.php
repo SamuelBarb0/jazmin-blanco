@@ -122,6 +122,55 @@ class WhatsAppService
     }
 
     /**
+     * Descarga un archivo que envió la paciente (foto, nota de voz, documento).
+     *
+     * Son dos pasos: el webhook solo trae un `media_id`, hay que pedirle a Meta
+     * la URL temporal y después bajar el binario. Ojo: esa URL **no es pública**,
+     * exige el mismo token en la descarga, así que no sirve guardársela ni
+     * pasársela al navegador — hay que traer el archivo y almacenarlo nosotros.
+     *
+     * @return array{contents:string,mime:string,size:int}|null
+     */
+    public function downloadMedia(string $mediaId): ?array
+    {
+        if (! $this->isConfigured()) {
+            return null;
+        }
+
+        $meta = Http::withToken($this->token)
+            ->acceptJson()
+            ->timeout(30)
+            ->get("https://graph.facebook.com/{$this->apiVersion}/{$mediaId}");
+
+        if ($meta->failed() || blank($meta->json('url'))) {
+            Log::error('No se pudo resolver un archivo de WhatsApp.', [
+                'media_id' => $mediaId,
+                'status' => $meta->status(),
+                'error' => $meta->json('error') ?? $meta->body(),
+            ]);
+
+            return null;
+        }
+
+        $archivo = Http::withToken($this->token)->timeout(60)->get($meta->json('url'));
+
+        if ($archivo->failed()) {
+            Log::error('No se pudo descargar un archivo de WhatsApp.', [
+                'media_id' => $mediaId,
+                'status' => $archivo->status(),
+            ]);
+
+            return null;
+        }
+
+        return [
+            'contents' => $archivo->body(),
+            'mime' => (string) ($meta->json('mime_type') ?: $archivo->header('Content-Type')),
+            'size' => (int) $meta->json('file_size'),
+        ];
+    }
+
+    /**
      * @param  array<string,mixed>  $payload
      */
     private function post(array $payload): bool

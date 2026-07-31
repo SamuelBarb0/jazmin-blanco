@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\Campaign;
+use App\Models\Conversation;
 use App\Models\User;
 use App\Services\BotService;
 use App\Services\MetaAdsService;
@@ -16,6 +17,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -30,12 +32,14 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
     /**
      * @param  array<string,mixed>|null  $referral  Datos del anuncio Click-to-WhatsApp.
+     * @param  array<string,mixed>|null  $media  Descriptor del adjunto (kind, id, mime…).
      */
     public function __construct(
         public readonly string $from,
         public readonly string $text,
         public readonly ?string $profileName = null,
         public readonly ?array $referral = null,
+        public readonly ?array $media = null,
     ) {
     }
 
@@ -113,9 +117,13 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 $conversation->save();
             }
 
+            // El archivo se guarda ANTES de cualquier interruptor: que el bot
+            // esté en pausa no debe costarle a la doctora la foto que le mandó
+            // la paciente.
             $conversation->messages()->create([
                 'role' => 'user',
                 'content' => $this->text,
+                'media' => $this->guardarAdjunto($whatsapp, $conversation) ?: null,
             ]);
 
             // Interruptor general: con el bot apagado el mensaje queda guardado y
@@ -205,6 +213,70 @@ class ProcessWhatsAppMessage implements ShouldQueue
      * una campaña con ese ID de anuncio, la crea automáticamente con el título y
      * el texto del anuncio, para que aparezca en el panel de Campañas.
      */
+    /**
+     * Descarga el archivo que mandó la paciente y lo guarda en el disco público
+     * para que la doctora pueda verlo en la bandeja. Devuelve el mismo formato
+     * de la columna `media` que ya usa el bot para su material del catálogo.
+     *
+     * Si la descarga falla, el mensaje se guarda igual (sin adjunto): perder el
+     * texto por culpa de una foto sería peor.
+     *
+     * @return list<array<string,string>>
+     */
+    private function guardarAdjunto(WhatsAppService $whatsapp, Conversation $conversation): array
+    {
+        if (! $this->media) {
+            return [];
+        }
+
+        $archivo = $whatsapp->downloadMedia((string) $this->media['id']);
+        if (! $archivo) {
+            return [];
+        }
+
+        $ruta = sprintf(
+            'whatsapp/%d/%s.%s',
+            $conversation->id,
+            Str::uuid(),
+            $this->extensionDe((string) ($this->media['mime'] ?? ''), (string) ($this->media['filename'] ?? '')),
+        );
+
+        Storage::disk('public')->put($ruta, $archivo['contents']);
+
+        return [[
+            'type' => (string) $this->media['kind'],
+            'url' => Storage::disk('public')->url($ruta),
+            'caption' => (string) ($this->media['caption'] ?? ''),
+            'filename' => (string) ($this->media['filename'] ?? ''),
+        ]];
+    }
+
+    /**
+     * Extensión a partir del mime que reporta WhatsApp, con el nombre original
+     * como respaldo. El mime suele traer parámetros ("audio/ogg; codecs=opus"),
+     * por eso se corta en el punto y coma.
+     */
+    private function extensionDe(string $mime, string $filename): string
+    {
+        $mime = trim(explode(';', $mime)[0]);
+
+        $conocidos = [
+            'image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp',
+            'video/mp4' => 'mp4', 'video/3gpp' => '3gp',
+            'audio/ogg' => 'ogg', 'audio/mpeg' => 'mp3', 'audio/mp4' => 'm4a',
+            'audio/amr' => 'amr', 'audio/aac' => 'aac',
+            'application/pdf' => 'pdf',
+        ];
+
+        if (isset($conocidos[$mime])) {
+            return $conocidos[$mime];
+        }
+
+        $delNombre = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+
+        return preg_match('/^[a-z0-9]{1,5}$/', $delNombre) ? $delNombre : 'bin';
+    }
+
     /**
      * ¿Este número queda fuera del modo prueba? Con la lista blanca vacía nadie
      * queda fuera (comportamiento normal); con números cargados, todo el que no
