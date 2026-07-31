@@ -348,7 +348,11 @@ class BotService
             $tools[] = [
                 'name' => 'verificar_pago',
                 'description' => 'Consulta en la pasarela si la paciente YA pagó el link que se le compartió. Úsala SIEMPRE que diga que pagó, antes de agendar. Devuelve si el pago está confirmado o todavía pendiente.',
-                'input_schema' => ['type' => 'object', 'properties' => [], 'required' => []],
+                // `properties` va como objeto vacío, NO como array: en PHP un []
+                // se serializa a `[]` y la API de Claude rechaza la petición
+                // entera con "input_schema.properties: Input should be an object",
+                // dejando al bot sin poder responder nada.
+                'input_schema' => ['type' => 'object', 'properties' => new \stdClass(), 'required' => []],
             ];
         }
 
