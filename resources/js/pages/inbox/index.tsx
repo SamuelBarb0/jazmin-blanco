@@ -3,7 +3,7 @@ import AppLayout from '@/layouts/app-layout';
 import { cn } from '@/lib/utils';
 import { type BreadcrumbItem, type SharedData } from '@/types';
 import { Head, router, useForm, usePage } from '@inertiajs/react';
-import { AlertTriangle, Bot, Clock, FileText, MessageCircle, Paperclip, Pause, Play, SendHorizonal, User, X } from 'lucide-react';
+import { AlertTriangle, Bot, ChevronLeft, Clock, FileText, MessageCircle, Paperclip, Pause, Play, SendHorizonal, User, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useRef } from 'react';
 
@@ -119,9 +119,19 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
         <AppLayout breadcrumbs={breadcrumbs}>
             <Head title="Conversaciones" />
 
-            <div className="flex h-[calc(100vh-9rem)] gap-4 p-4">
+            {/* En celular no caben las dos columnas: se ve la lista, y al abrir
+                un chat se ve solo el chat con un botón para volver. En pantalla
+                grande se mantienen lado a lado. `dvh` en vez de `vh` porque en
+                el navegador del móvil la barra de direcciones se esconde y con
+                `vh` el compositor queda fuera de la pantalla. */}
+            <div className="flex h-[calc(100dvh-9rem)] gap-4 p-2 md:p-4">
                 {/* ── Lista de chats ─────────────────────────────── */}
-                <aside className="glass flex w-80 shrink-0 flex-col overflow-hidden rounded-xl">
+                <aside
+                    className={cn(
+                        'glass w-full shrink-0 flex-col overflow-hidden rounded-xl md:flex md:w-80',
+                        selected ? 'hidden' : 'flex',
+                    )}
+                >
                     <header className="border-b border-border/60 px-4 py-3">
                         <h2 className="font-display text-lg">Conversaciones</h2>
                         <p className="text-xs text-muted-foreground">{conversations.length} chats de WhatsApp</p>
@@ -159,7 +169,12 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                 </aside>
 
                 {/* ── Chat ───────────────────────────────────────── */}
-                <section className="glass flex flex-1 flex-col overflow-hidden rounded-xl">
+                <section
+                    className={cn(
+                        'glass flex-1 flex-col overflow-hidden rounded-xl md:flex',
+                        selected ? 'flex' : 'hidden',
+                    )}
+                >
                     {!selected && (
                         <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
                             <MessageCircle className="mr-2 size-4" /> Elige una conversación
@@ -168,24 +183,40 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
 
                     {selected && (
                         <>
-                            <header className="flex items-center justify-between gap-4 border-b border-border/60 px-5 py-3">
-                                <div className="min-w-0">
+                            <header className="flex items-center justify-between gap-3 border-b border-border/60 px-3 py-3 md:px-5">
+                                {/* Volver a la lista: solo hace falta en celular,
+                                    donde la lista está oculta. */}
+                                <button
+                                    type="button"
+                                    onClick={() => router.get(route('inbox.index'), { lista: 1 }, { preserveState: true })}
+                                    className="-ml-1 shrink-0 rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground md:hidden"
+                                    aria-label="Volver a las conversaciones"
+                                >
+                                    <ChevronLeft className="size-5" />
+                                </button>
+
+                                <div className="min-w-0 flex-1">
                                     <h2 className="truncate font-display text-lg">{selected.lead?.name || selected.title}</h2>
                                     <p className="text-xs text-muted-foreground">{selected.lead?.phone || 'Sin teléfono'}</p>
                                 </div>
 
+                                {/* En celular el botón se queda en el icono: el
+                                    texto completo empujaba el nombre fuera. */}
                                 <Button
                                     variant={selected.bot_enabled ? 'outline' : 'default'}
                                     size="sm"
+                                    className="shrink-0"
                                     onClick={() => router.patch(route('inbox.toggle', selected.id), {}, { preserveScroll: true })}
                                 >
                                     {selected.bot_enabled ? (
                                         <>
-                                            <Pause className="size-4" /> Pausar a Lore
+                                            <Pause className="size-4" />
+                                            <span className="hidden sm:inline">Pausar a Lore</span>
                                         </>
                                     ) : (
                                         <>
-                                            <Play className="size-4" /> Reactivar a Lore
+                                            <Play className="size-4" />
+                                            <span className="hidden sm:inline">Reactivar a Lore</span>
                                         </>
                                     )}
                                 </Button>
@@ -198,7 +229,7 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                                 </div>
                             )}
 
-                            <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+                            <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-4 md:px-5">
                                 {selected.messages.map((m) => {
                                     const mio = m.role === 'assistant';
 
@@ -270,7 +301,7 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                             </div>
 
                             {/* ── Responder ──────────────────────────── */}
-                            <footer className="border-t border-border/60 px-5 py-3">
+                            <footer className="border-t border-border/60 px-3 py-3 md:px-5">
                                 {flash?.error && (
                                     <div className="mb-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                                         {flash.error}
@@ -339,7 +370,7 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                                                 ? data.archivo
                                                     ? 'Agrega un texto para la imagen (opcional)…'
                                                     : 'Escribe tu respuesta… (Enter para enviar)'
-                                                : 'No se le puede escribir en este momento'
+                                                : 'No se puede escribir ahora'
                                         }
                                         className="max-h-32 flex-1 resize-none rounded-xl border border-border/60 bg-background/60 px-4 py-2.5 text-sm outline-none focus:border-primary/40 disabled:opacity-50"
                                     />

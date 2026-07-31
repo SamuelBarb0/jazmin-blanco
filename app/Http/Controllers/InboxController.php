@@ -41,16 +41,21 @@ class InboxController extends Controller
                 'preview' => $c->messages()->latest('id')->value('content'),
             ]);
 
-        // Por defecto se abre la conversación más reciente.
+        // Por defecto se abre la conversación más reciente, que en pantalla
+        // grande evita el panel vacío. En celular NO sirve: como solo cabe una
+        // columna, abrir un chat solo deja la lista inalcanzable y el botón de
+        // volver rebotaría al mismo chat. Por eso el volver pide `?lista=1`.
         if ($conversation?->exists && $conversation->user_id !== $user->id) {
             abort(403);
         }
         $selected = $conversation?->exists
             ? $conversation
-            : $user->conversations()->where('channel', '!=', 'panel')
-                ->withMax('messages as last_message_at', 'created_at')
-                ->orderByDesc('last_message_at')
-                ->first();
+            : ($request->boolean('lista')
+                ? null
+                : $user->conversations()->where('channel', '!=', 'panel')
+                    ->withMax('messages as last_message_at', 'created_at')
+                    ->orderByDesc('last_message_at')
+                    ->first());
 
         return Inertia::render('inbox/index', [
             'conversations' => $conversations,
