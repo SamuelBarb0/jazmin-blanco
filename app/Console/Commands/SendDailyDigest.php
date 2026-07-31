@@ -9,6 +9,7 @@ use App\Models\Message;
 use App\Models\PaymentLink;
 use App\Models\User;
 use App\Services\WhatsAppService;
+use App\Support\PatientLeads;
 use App\Support\Settings;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
@@ -108,9 +109,15 @@ class SendDailyDigest extends Command
         // ── Pagos y agenda ─────────────────────────────────────────────
         $activos = PaymentLink::where('user_id', $user->id)->whereIn('status', ['ACTIVE', 'PENDING', 'PROCESSING'])->count();
         $pagados = PaymentLink::where('user_id', $user->id)->where('paid_at', '>=', $desde)->count();
+        // Mismo criterio que `appointments:send-reminders`: la agenda de la
+        // doctora tiene marcadores ("PERU", "FESTIVO", "DOMINGO") que son citas
+        // en Google pero no pacientes. Contarlos infla el número con gente que
+        // no existe.
         $manana = Appointment::where('user_id', $user->id)
             ->whereBetween('starts_at', [now()->startOfDay()->addDay(), now()->endOfDay()->addDay()])
             ->whereIn('status', ['scheduled', 'confirmed'])
+            ->get()
+            ->reject(fn (Appointment $a) => blank($a->patient_phone) && PatientLeads::isNonPatient($a->patient_name))
             ->count();
 
         $l[] = '';
