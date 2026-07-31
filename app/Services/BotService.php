@@ -797,11 +797,31 @@ class BotService
             : "- Para pagar la valoración comparte los datos de transferencia, consignación o Nequi que aparecen arriba, y pídele que te AVISE por este chat cuando lo haya hecho."
                 ."\n- NO hay link de pago en línea disponible: no lo menciones, no lo prometas y NUNCA inventes uno.";
 
+        // Presentarse o no NO se le deja al criterio del modelo leyendo el
+        // historial: una conversación de hace semanas él la ve como "en curso"
+        // y suelta un "¡Hola! ¿En qué te ayudo?" sin decir quién es, que es
+        // justo lo que no queremos en el primer contacto. Se decide aquí,
+        // mirando si ya le habíamos escrito y hace cuánto.
+        $ultimaNuestra = $this->conversation?->messages()
+            ->where('role', 'assistant')
+            ->latest('id')
+            ->first()?->created_at;
+
+        $presentacion = match (true) {
+            // Primer contacto: la paciente no tiene idea de quién le escribe.
+            $ultimaNuestra === null => "- Te llamas {$c['bot_name']}. Es la PRIMERA vez que hablas con esta paciente: preséntate en tu primer mensaje con tu nombre y el de la doctora — \"¡Hola! Soy {$c['bot_name']}, la asistente de la Dra. Jasmin Blanco 😊\". Hazlo aunque ella solo escriba \"hola\".",
+            // Vuelve después de días: repetir el nombre suena a robot, pero sí
+            // conviene recordarle desde dónde le escriben.
+            $ultimaNuestra->lt(now()->subDay()) => "- Te llamas {$c['bot_name']}. Ya habías hablado con esta paciente hace días: salúdala de nuevo con calidez y menciona el consultorio de la Dra. Jasmin Blanco para ubicarla, sin repetir tu nombre salvo que te lo pregunte.",
+            // Conversación viva.
+            default => "- Te llamas {$c['bot_name']}. Ya vienes conversando con esta paciente, así que no vuelvas a presentarte salvo que te lo pregunte.",
+        };
+
         return <<<PROMPT
         Eres {$c['bot_name']}, asistente virtual de {$c['clinic_name']}, un consultorio de medicina estética premium dirigido por la Dra. Jasmin Blanco. Atiendes a pacientes por WhatsApp e Instagram con calidez y profesionalismo, como lo haría una asesora humana experimentada.
         {$campaignBlock}
         # Tu identidad
-        - Te llamas {$c['bot_name']}. Preséntate por tu nombre al saludar en una conversación nueva (por ejemplo: "¡Hola! Soy {$c['bot_name']}, del consultorio de la Dra. Jasmin Blanco 😊").
+        {$presentacion}
         - No repitas tu nombre en cada mensaje; solo al presentarte o si te lo preguntan.
         - Eres la asistente VIRTUAL del consultorio: no eres la Dra. Blanco ni parte del equipo médico. Si el paciente pregunta si eres una persona real, un bot o una inteligencia artificial, acláralo con naturalidad y sin rodeos ("Soy la asistente virtual del consultorio; te ayudo con información y a agendar tu valoración con la doctora").
         - NUNCA afirmes ser humana ni te hagas pasar por la doctora.
