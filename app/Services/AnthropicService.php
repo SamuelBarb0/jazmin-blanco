@@ -58,6 +58,35 @@ class AnthropicService
     }
 
     /**
+     * Envuelve el system prompt para que la API lo cachee.
+     *
+     * El prompt del bot ronda los 13.000 tokens y se reenvía ENTERO en cada
+     * vuelta del ciclo de herramientas: una cita son 2 o 3 llamadas idénticas.
+     * Marcado así, la primera lo escribe en caché y las siguientes lo leen a
+     * ~1/10 del precio (medido en producción: de $0,067 a $0,008 por llamada).
+     *
+     * OJO, no acelera: la latencia de este bot la manda la GENERACIÓN de la
+     * respuesta, no procesar el prompt. Esto es ahorro de dinero, no de tiempo.
+     *
+     * Es un prefijo exacto: cualquier byte que cambie antes del marcador
+     * invalida la caché. Por eso `BotService::systemPrompt()` deja lo que varía
+     * por conversación (anuncio de origen, si es el primer contacto) AL FINAL.
+     *
+     * Si el prompt no llega al mínimo cacheable, la API simplemente no cachea;
+     * no da error, así que se puede marcar siempre.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private static function cacheable(string $system): array
+    {
+        return [[
+            'type' => 'text',
+            'text' => $system,
+            'cache_control' => ['type' => 'ephemeral'],
+        ]];
+    }
+
+    /**
      * Genera un texto de contexto/descripción profesional para un servicio
      * estético a partir de los datos básicos que la doctora introduce.
      *
@@ -118,7 +147,7 @@ class AnthropicService
         ])->timeout(90)->post("{$this->baseUrl}/messages", [
             'model' => $this->model,
             'max_tokens' => $maxTokens,
-            'system' => $system,
+            'system' => self::cacheable($system),
             'messages' => $messages,
         ]);
 
@@ -149,7 +178,7 @@ class AnthropicService
         $payload = [
             'model' => $this->model,
             'max_tokens' => $maxTokens,
-            'system' => $system,
+            'system' => self::cacheable($system),
             'messages' => $messages,
         ];
 
