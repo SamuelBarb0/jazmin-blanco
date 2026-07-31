@@ -232,7 +232,10 @@ class Settings
         return [
             'bot_name' => self::get('bot_name') ?: 'Lore',
             'clinic_name' => self::get('clinic_name') ?: 'Consultorio Dra. Jasmin Blanco',
-            'clinic_address' => self::get('clinic_address') ?: 'Carrera 16A # 82-95, consultorio 303, Bogotá',
+            // Dirección tal como la escribió la doctora en sus propias plantillas
+            // de WhatsApp (notificacion_2_dias, notificacion_agendamiento y
+            // recordatorio_de_reserva_3_horas_antes coinciden en el 82-46).
+            'clinic_address' => self::get('clinic_address') ?: 'Cra 16 A #82-46 Consultorio 303, Bogotá',
             'clinic_hours' => self::get('clinic_hours') ?: 'Lunes a viernes de 8:00 a.m. a 6:00 p.m. y sábados de 9:00 a.m. a 1:00 p.m.',
             'clinic_payment' => self::get('clinic_payment') ?: 'Efectivo, tarjeta débito y crédito, y transferencia bancaria.',
             'clinic_payment_link' => self::get('clinic_payment_link') ?: '',
