@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Appointment;
 use App\Models\Campaign;
 use App\Models\Conversation;
 use App\Models\PaymentLink;
@@ -38,6 +39,20 @@ class BotService
     public static function fromUser(User $user): self
     {
         return new self($user, AnthropicService::fromConfig());
+    }
+
+    /**
+     * Fija la conversación sin pasar por `reply()`.
+     *
+     * La necesita `payments:check-pending`, que agenda por su cuenta: sin
+     * conversación, `createBooking()` no encuentra el lead que ya entró por
+     * WhatsApp y crearía uno nuevo, duplicando la paciente en el pipeline.
+     */
+    public function forConversation(?Conversation $conversation): self
+    {
+        $this->conversation = $conversation;
+
+        return $this;
     }
 
     public function isReady(): bool
@@ -414,11 +429,17 @@ class BotService
         if (MercadoPagoService::fromConfig()->isConfigured()) {
             $tools[] = [
                 'name' => 'generar_link_pago',
-                'description' => 'Genera un link de pago ÚNICO para esta paciente y devuelve la URL para compartirle. Úsala cuando ya acordaron día y hora y le vas a pedir el pago de la valoración. No inventes links: usa siempre el que devuelva esta herramienta.',
+                'description' => 'Genera un link de pago ÚNICO para esta paciente y devuelve la URL para compartirle. Úsala cuando ya acordaron día y hora y le vas a pedir el pago de la valoración. No inventes links: usa siempre el que devuelva esta herramienta. IMPORTANTE: pásale el día, la hora y el nombre que ya acordaron — con eso la cita se agenda SOLA en cuanto entre el pago, aunque la paciente no vuelva a escribir.',
                 'input_schema' => [
                     'type' => 'object',
                     'properties' => [
                         'concepto' => ['type' => 'string', 'description' => 'Qué se está cobrando, por ejemplo "Valoración médica". Si se omite, se cobra la valoración.'],
+                        'fecha_hora' => ['type' => 'string', 'description' => 'Día y hora que la paciente ya eligió, en formato YYYY-MM-DDTHH:MM (hora local de la clínica). Inclúyelo SIEMPRE que ya lo hayan acordado.'],
+                        'nombre_paciente' => ['type' => 'string', 'description' => 'Nombre de la paciente, para poder agendar en cuanto pague.'],
+                        'servicio' => ['type' => 'string', 'description' => 'Tratamiento o motivo de la cita, tal como lo dijo la paciente.'],
+                        'telefono' => ['type' => 'string', 'description' => 'Teléfono de contacto, si lo tienes.'],
+                        'correo' => ['type' => 'string', 'description' => 'Correo, si lo tienes.'],
+                        'duracion_minutos' => ['type' => 'integer', 'description' => 'Duración en minutos. Si se omite, se usa la del servicio o 45.'],
                     ],
                     'required' => [],
                 ],
@@ -665,6 +686,19 @@ class BotService
 
         $referencia = 'conv-'.($this->conversation?->id ?? 0).'-'.now()->timestamp;
 
+        // La cita que ya acordaron viaja con el link. Es lo que permite que
+        // `payments:check-pending` agende solo cuando entre el pago: sin esto el
+        // horario solo existe en la conversación y hay que esperar a que la
+        // paciente vuelva a escribir.
+        $reserva = array_filter([
+            'fecha_hora' => trim((string) ($input['fecha_hora'] ?? '')) ?: null,
+            'nombre_paciente' => trim((string) ($input['nombre_paciente'] ?? '')) ?: $this->conversation?->lead?->name,
+            'servicio' => trim((string) ($input['servicio'] ?? '')) ?: null,
+            'telefono' => trim((string) ($input['telefono'] ?? '')) ?: $this->conversation?->lead?->phone,
+            'correo' => trim((string) ($input['correo'] ?? '')) ?: null,
+            'duracion_minutos' => (int) ($input['duracion_minutos'] ?? 0) ?: null,
+        ], fn ($v) => filled($v));
+
         $link = $pasarela->createLink(
             $monto,
             $referencia,
@@ -682,14 +716,21 @@ class BotService
             'url' => $link['url'],
             'amount' => $monto,
             'description' => $concepto,
+            'booking' => $reserva ?: null,
             'status' => 'ACTIVE',
             'expires_at' => now()->addDay(),
         ]);
 
         $formateado = '$'.number_format($monto, 0, ',', '.');
 
+        // Solo se le promete el agendamiento automático si de verdad quedó
+        // guardado el horario; si no, la paciente TIENE que volver a escribir.
+        $aviso = filled($reserva['fecha_hora'] ?? null)
+            ? 'La cita quedó reservada con ese día y hora: en cuanto entre el pago se agenda sola y se le confirma, aunque no vuelva a escribir. Dile que le confirmarás apenas se refleje.'
+            : 'OJO: no guardaste día y hora, así que la cita NO se agendará sola. Pídele que te avise por aquí cuando pague.';
+
         return "Link de pago generado por {$formateado} ({$concepto}). Compártele EXACTAMENTE esta URL: {$link['url']} "
-            .'Dile que puede pagar con tarjeta débito o crédito, PSE o Efecty, y que te avise cuando termine para confirmarle la cita.';
+            .'Dile que puede pagar con tarjeta débito o crédito, PSE o Efecty. '.$aviso;
     }
 
     /**
@@ -754,6 +795,8 @@ class BotService
      */
     private function toolBook(array $input): string
     {
+        $link = null;
+
         // Con la pasarela conectada, el pago deja de depender de la palabra de
         // la paciente ni de que el modelo respete el prompt: si no hay un link
         // pagado de verdad, aquí no se agenda.
@@ -767,8 +810,40 @@ class BotService
             if (! $link->isPaid()) {
                 return 'ERROR: el pago de esta paciente NO está confirmado en la pasarela. Verifícalo con verificar_pago; si sigue pendiente, no agendes y dile con amabilidad que en cuanto se refleje el pago le confirmas la cita.';
             }
+
+            // El barrido automático pudo haberla agendado ya al detectar el
+            // pago. Sin esta guarda, que la paciente escriba "ya pagué" después
+            // le crearía una segunda cita a la misma hora.
+            if ($link->appointment_id) {
+                $ya = $link->appointment;
+                $cuando = $ya?->starts_at?->format('Y-m-d h:i a') ?? 'la hora acordada';
+
+                return "La cita YA está agendada para {$cuando} (se agendó sola en cuanto entró el pago). "
+                    .'NO vuelvas a agendar: solo confírmasela con calidez y recuérdale la dirección.';
+            }
         }
 
+        $resultado = $this->createBooking($input);
+
+        if ($link && $resultado['appointment']) {
+            $link->forceFill(['appointment_id' => $resultado['appointment']->id])->save();
+        }
+
+        return $resultado['message'];
+    }
+
+    /**
+     * Crea la cita (pipeline + agenda + Google Calendar) y devuelve el resultado.
+     *
+     * Es pública y separada de `toolBook` a propósito: `payments:check-pending`
+     * agenda por su cuenta cuando entra un pago sin que la paciente vuelva a
+     * escribir, y necesita exactamente esta lógica sin la parte conversacional.
+     *
+     * @param  array<string,mixed>  $input
+     * @return array{message:string, appointment:?Appointment}
+     */
+    public function createBooking(array $input): array
+    {
         $tz = Settings::googleTimezone();
         $start = Carbon::parse($input['fecha_hora'], $tz);
 
@@ -789,7 +864,10 @@ class BotService
             $bs = Carbon::parse($b['start']);
             $be = Carbon::parse($b['end']);
             if ($start->lt($be) && $end->gt($bs)) {
-                return "ERROR: el horario de las {$start->format('h:i a')} ya está ocupado. No agendes ahí; ofrece otro horario libre.";
+                return [
+                    'message' => "ERROR: el horario de las {$start->format('h:i a')} ya está ocupado. No agendes ahí; ofrece otro horario libre.",
+                    'appointment' => null,
+                ];
             }
         }
 
@@ -854,15 +932,23 @@ class BotService
         } catch (Throwable $e) {
             $appointment->forceFill(['google_sync_error' => $e->getMessage()])->save();
 
-            return 'La cita quedó guardada pero no se pudo poner en el calendario: '.$e->getMessage()
-                .' Avísale al paciente que la confirmarás en breve.';
+            // La cita SÍ existe: se devuelve para que quien llame la dé por
+            // creada y no la intente otra vez. Lo que falló es el calendario.
+            return [
+                'message' => 'La cita quedó guardada pero no se pudo poner en el calendario: '.$e->getMessage()
+                    .' Avísale al paciente que la confirmarás en breve.',
+                'appointment' => $appointment,
+            ];
         }
 
         $when = $start->format('Y-m-d').' a las '.$start->format('h:i a');
 
-        return 'Cita agendada con éxito para '.$input['nombre_paciente'].' el '.$when
-            .($service ? ' ('.$service->name.')' : '')
-            .'. Quedó registrada en la agenda. Confírmasela al paciente con calidez y recuérdale la dirección de la clínica.';
+        return [
+            'message' => 'Cita agendada con éxito para '.$input['nombre_paciente'].' el '.$when
+                .($service ? ' ('.$service->name.')' : '')
+                .'. Quedó registrada en la agenda. Confírmasela al paciente con calidez y recuérdale la dirección de la clínica.',
+            'appointment' => $appointment,
+        ];
     }
 
     /**
@@ -1119,7 +1205,9 @@ class BotService
         // quedó un link fijo configurado: si no hay ninguno, solo datos bancarios.
         if (MercadoPagoService::fromConfig()->isConfigured()) {
             $pagoBlock = "\n        - Genera su link de pago con generar_link_pago (es único para ella) y compártele EXACTAMENTE la URL que devuelva. Nunca inventes ni reutilices links de otras pacientes."
+                ."\n        - AL GENERARLO, pásale SIEMPRE el día y la hora que ya acordaron (fecha_hora) y el nombre de la paciente. Con eso la cita se agenda SOLA en cuanto entre el pago y se le confirma por este chat, aunque ella no vuelva a escribir. Si no se lo pasas, la cita queda en el aire hasta que ella escriba."
                 ."\n        - Cuando diga que ya pagó, comprueba SIEMPRE con verificar_pago antes de agendar. Si el pago no está confirmado, no agendes: dile con amabilidad que aún no se refleja y que apenas entre le confirmas la cita."
+                ."\n        - Si al agendar te dicen que la cita YA estaba agendada, no es un error: se agendó sola al entrar el pago. Solo confírmasela con calidez."
                 ."\n        - El link acepta tarjeta débito o crédito, PSE y Efecty, así que no necesitas dar datos de cuentas bancarias.";
         } else {
             $medioPago = filled(Settings::botConfig()['clinic_payment_link'] ?? null)

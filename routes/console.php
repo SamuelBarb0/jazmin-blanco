@@ -19,3 +19,18 @@ Artisan::command('inspire', function () {
 Schedule::command('appointments:send-reminders')
     ->hourly()
     ->withoutOverlapping();
+
+/*
+ * Pagos pendientes: agenda la cita en cuanto entra el pago.
+ *
+ * Cada cinco minutos, no cada minuto: el link vive 24 horas y a la paciente no
+ * le cambia nada esperar unos minutos, mientras que consultar la pasarela por
+ * cada link vivo sesenta veces por hora no aporta.
+ *
+ * No lo hace un webhook de Mercado Pago a propósito: un barrido no depende de
+ * que la notificación llegue ni de que el endpoint esté accesible, y recupera
+ * solo si una corrida falla.
+ */
+Schedule::command('payments:check-pending')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();

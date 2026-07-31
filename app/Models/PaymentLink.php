@@ -16,6 +16,7 @@ class PaymentLink extends Model
     protected $fillable = [
         'user_id', 'conversation_id', 'lead_id',
         'reference', 'payment_link', 'url', 'amount', 'description',
+        'booking', 'appointment_id',
         'status', 'payment_method', 'paid_at', 'expires_at', 'checked_at',
     ];
 
@@ -23,6 +24,7 @@ class PaymentLink extends Model
     {
         return [
             'amount' => 'integer',
+            'booking' => 'array',
             'paid_at' => 'datetime',
             'expires_at' => 'datetime',
             'checked_at' => 'datetime',
@@ -32,6 +34,24 @@ class PaymentLink extends Model
     public function isPaid(): bool
     {
         return $this->status === self::PAGADO;
+    }
+
+    /**
+     * ¿Se puede agendar sola esta cita en cuanto entre el pago?
+     *
+     * Hace falta el horario acordado: sin él el barrido sabe que pagó, pero no
+     * para cuándo, y hay que esperar a que la paciente escriba.
+     */
+    public function canAutoBook(): bool
+    {
+        return $this->appointment_id === null
+            && filled($this->booking['fecha_hora'] ?? null)
+            && filled($this->booking['nombre_paciente'] ?? null);
+    }
+
+    public function appointment(): BelongsTo
+    {
+        return $this->belongsTo(Appointment::class);
     }
 
     public function conversation(): BelongsTo
