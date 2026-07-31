@@ -1024,7 +1024,10 @@ class BotService
         $personaBlock = $persona !== '' ? "\n\nIndicaciones adicionales de la doctora:\n{$persona}" : '';
 
         $schedulingBlock = $this->canSchedule() ? $this->schedulingPrompt() : '';
-        $campaignBlock = $campaign ? $this->campaignPrompt($campaign) : '';
+        // Ya no se condiciona a que haya campaña: el texto del anuncio llega en
+        // el referral de la conversación y sirve aunque la campaña no esté
+        // importada. El método decide si hay algo que decir.
+        $campaignBlock = $this->campaignPrompt($campaign);
 
         $valoracionLinkLine = filled($c['clinic_payment_link'] ?? null)
             ? "\n- Link para pagar la valoración en línea: {$c['clinic_payment_link']}"
@@ -1157,22 +1160,53 @@ class BotService
      * Contexto de la campaña de Meta de la que viene el paciente, para que el bot
      * responda enfocado en el servicio y la oferta de ese anuncio.
      */
-    private function campaignPrompt(Campaign $campaign): string
+    private function campaignPrompt(?Campaign $campaign): string
     {
-        $campaign->loadMissing('service', 'media');
+        // El texto del anuncio que el paciente ACABA de leer es el mejor
+        // contexto que existe, y ya lo guardábamos sin usarlo: vive en
+        // `conversations.referral`, que Meta rellena en el primer mensaje tras
+        // tocar el anuncio. El nombre de la campaña, en cambio, es interno
+        // ("VIDEOS METABOLICO -k-") y no le dice nada a nadie.
+        //
+        // Además el referral existe aunque la campaña no esté importada, así
+        // que este bloque ya no depende de haberla podido resolver.
+        $referral = (array) ($this->conversation?->referral ?? []);
+        $anuncio = trim((string) ($referral['body'] ?? ''));
+        $titular = trim((string) ($referral['headline'] ?? ''));
 
-        $lines = ['# Contexto de la campaña de origen'];
-        $lines[] = "Este paciente llegó por la campaña \"{$campaign->name}\" de Meta. Atiéndelo dando por hecho que viene interesado por ese anuncio.";
+        if (! $campaign && $anuncio === '') {
+            return '';
+        }
 
-        if ($campaign->service) {
+        $lines = ['# De dónde viene este paciente'];
+
+        if ($anuncio !== '') {
+            $lines[] = 'Escribió justo después de ver un anuncio del consultorio. Este es el texto que leyó'
+                .($titular !== '' ? " (titular: «{$titular}»)" : '').':';
+            $lines[] = '"""';
+            $lines[] = Str::limit($anuncio, 1200);
+            $lines[] = '"""';
+            $lines[] = 'Da por hecho que viene interesado en LO QUE PROMETE ese anuncio y orienta ahí tu primer mensaje, en vez de preguntarle en qué puedes ayudarle.';
+            // Sin esto el modelo tiende a lucir el dato ("veo que viniste del
+            // anuncio de..."), que al paciente le suena a que lo vigilan.
+            $lines[] = 'NO menciones el anuncio ni des a entender que sabes lo que vio. Que se note en que aciertas con el tema, no en que lo dices.';
+            // El anuncio es publicidad y promete resultados; el bot no puede.
+            $lines[] = 'OJO: ese texto es material publicitario, no una promesa médica. Puedes hablar del tratamiento, pero NO repitas sus promesas como resultados garantizados ni asegures pérdidas de peso, tiempos ni efectos concretos.';
+        }
+
+        if ($campaign) {
+            $campaign->loadMissing('service', 'media');
+        }
+
+        if ($campaign?->service) {
             $lines[] = "Servicio promocionado en el anuncio: {$campaign->service->name}. Prioriza este servicio en tu respuesta.";
         }
 
-        if (filled($campaign->offer)) {
+        if (filled($campaign?->offer)) {
             $lines[] = "Oferta / ángulo del anuncio (aprovéchalo con naturalidad, sin sonar a vendedor):\n{$campaign->offer}";
         }
 
-        $usableMedia = $campaign->media->filter(fn ($m) => filled($m->resolved_url));
+        $usableMedia = ($campaign?->media ?? collect())->filter(fn ($m) => filled($m->resolved_url));
         if ($usableMedia->isNotEmpty()) {
             $photos = $usableMedia->where('type', 'image')->count();
             $videos = $usableMedia->where('type', 'video')->count();
@@ -1187,7 +1221,15 @@ class BotService
                 .'). Para enviárselo al paciente, escribe la etiqueta [[media:anuncio]] en una línea aparte, acompañada de una frase cálida y natural. Envíalo cuando ayude a generar confianza o cuando el paciente pida ver fotos, videos o resultados. El paciente no ve la etiqueta.';
         }
 
-        $lines[] = 'Saluda cálidamente reconociendo su interés, resuelve sus dudas sobre ese servicio y guíalo a agendar una valoración. Si pregunta por otra cosa, ayúdalo igual.';
+        // Solo la cabecera = no se averiguó nada útil (campaña sin servicio ni
+        // oferta ni material, y sin texto de anuncio). Mejor no meter ruido.
+        if (count($lines) === 1) {
+            return '';
+        }
+
+        // "Reconociendo su interés" a secas empujaba al modelo a delatar que
+        // sabe de dónde viene; se pide calidez sin mencionar el origen.
+        $lines[] = 'Salúdalo con calidez, entra directo al tema que le interesa, resuelve sus dudas y guíalo a agendar una valoración. Si pregunta por otra cosa, ayúdalo igual.';
 
         return "\n".implode("\n", $lines)."\n";
     }
