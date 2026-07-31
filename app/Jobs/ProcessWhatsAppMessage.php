@@ -61,12 +61,17 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 return;
             }
 
-            // Por ahora solo entendemos texto. Otros formatos reciben un aviso amable.
+            // Por ahora solo entendemos texto. Otros formatos reciben un aviso
+            // amable, pero SOLO si el bot está encendido y el número puede ser
+            // atendido: este aviso también es Lore hablando, y con el bot en
+            // pausa (o en modo prueba) nadie debe recibir nada automático.
             if (trim($this->text) === '') {
-                $whatsapp->sendText(
-                    $this->from,
-                    'Por ahora solo puedo leer mensajes de texto 😊 Cuéntame en qué te puedo ayudar.',
-                );
+                if (Settings::whatsappBotEnabled() && ! $this->fueraDeLaListaDePrueba()) {
+                    $whatsapp->sendText(
+                        $this->from,
+                        'Por ahora solo puedo leer mensajes de texto 😊 Cuéntame en qué te puedo ayudar.',
+                    );
+                }
 
                 return;
             }
@@ -129,8 +134,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // esos números. Permite encender el bot y probar el canal en vivo
             // sin que le conteste a pacientes reales; el mensaje de las demás
             // se guarda igual y aparece en la bandeja. Lista vacía = normal.
-            $numerosDePrueba = Settings::whatsappTestNumbers();
-            if ($numerosDePrueba !== [] && ! Settings::phoneInList($this->from, $numerosDePrueba)) {
+            if ($this->fueraDeLaListaDePrueba()) {
                 Log::info('Modo prueba activo: el número no está en la lista blanca, no se responde.', [
                     'conversation_id' => $conversation->id,
                 ]);
@@ -201,6 +205,18 @@ class ProcessWhatsAppMessage implements ShouldQueue
      * una campaña con ese ID de anuncio, la crea automáticamente con el título y
      * el texto del anuncio, para que aparezca en el panel de Campañas.
      */
+    /**
+     * ¿Este número queda fuera del modo prueba? Con la lista blanca vacía nadie
+     * queda fuera (comportamiento normal); con números cargados, todo el que no
+     * esté en ella se queda sin respuesta automática.
+     */
+    private function fueraDeLaListaDePrueba(): bool
+    {
+        $numeros = Settings::whatsappTestNumbers();
+
+        return $numeros !== [] && ! Settings::phoneInList($this->from, $numeros);
+    }
+
     private function resolveCampaign(User $doctor): ?Campaign
     {
         $sourceId = $this->referral['source_id'] ?? null;
