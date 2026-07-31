@@ -98,6 +98,13 @@ class SendDailyDigest extends Command
         $l[] = "   {$entrantes} mensajes recibidos en {$chats} chats";
         $l[] = "   {$delBot} respuestas de Lore · {$humanos} escritas a mano";
 
+        // Los chats que el modo prueba deja sin responder no son una alerta,
+        // pero tampoco deben desaparecer del resumen: son pacientes esperando.
+        $enEspera = $this->sinAtenderPorDiseno($user, $desde);
+        if ($enEspera > 0) {
+            $l[] = "   {$enEspera} chat(s) esperando (Lore no les responde por la configuración actual)";
+        }
+
         // ── Pagos y agenda ─────────────────────────────────────────────
         $activos = PaymentLink::where('user_id', $user->id)->whereIn('status', ['ACTIVE', 'PENDING', 'PROCESSING'])->count();
         $pagados = PaymentLink::where('user_id', $user->id)->where('paid_at', '>=', $desde)->count();
@@ -141,23 +148,39 @@ class SendDailyDigest extends Command
 
         // 1. Mensajes que entraron y nadie contestó. Es la señal de que el bot
         //    está mudo — el fallo más caro y el más difícil de notar.
-        $sinResponder = $this->entrantes($user, $desde)
-            ->get(['conversation_id', 'id'])
-            ->groupBy('conversation_id')
-            ->filter(function ($msgs, $convId) {
-                $ultimoEntrante = $msgs->max('id');
-                $conv = Conversation::find($convId);
+        //
+        //    Solo tiene sentido preguntárselo si se ESPERABA una respuesta. Con
+        //    el interruptor global apagado no se espera ninguna, y en modo
+        //    prueba solo se esperan de los números de la lista blanca: sin este
+        //    filtro la alerta salta todos los días por diseño, y una alerta que
+        //    grita en falso a diario se acaba ignorando.
+        $lista = Settings::whatsappTestNumbers();
 
-                // Con el chat en pausa o escalado el silencio es intencional.
-                if (! $conv || ! $conv->bot_enabled) {
-                    return false;
-                }
+        $sinResponder = Settings::whatsappBotEnabled()
+            ? $this->entrantes($user, $desde)
+                ->get(['conversation_id', 'id'])
+                ->groupBy('conversation_id')
+                ->filter(function ($msgs, $convId) use ($lista) {
+                    $ultimoEntrante = $msgs->max('id');
+                    $conv = Conversation::find($convId);
 
-                return ! Message::where('conversation_id', $convId)
-                    ->where('id', '>', $ultimoEntrante)
-                    ->where('role', 'assistant')
-                    ->exists();
-            });
+                    // Con el chat en pausa o escalado el silencio es intencional.
+                    if (! $conv || ! $conv->bot_enabled) {
+                        return false;
+                    }
+
+                    // Modo prueba: a los de fuera de la lista no se les responde
+                    // a propósito.
+                    if ($lista !== [] && ! Settings::phoneInList((string) $conv->lead?->phone, $lista)) {
+                        return false;
+                    }
+
+                    return ! Message::where('conversation_id', $convId)
+                        ->where('id', '>', $ultimoEntrante)
+                        ->where('role', 'assistant')
+                        ->exists();
+                })
+            : collect();
 
         if ($sinResponder->isNotEmpty()) {
             $alertas[] = $sinResponder->count().' chat(s) con mensajes SIN RESPONDER (¿Lore caída?)';
@@ -205,6 +228,44 @@ class SendDailyDigest extends Command
         }
 
         return $alertas;
+    }
+
+    /**
+     * Chats con mensajes entrantes que NO se respondieron a propósito: el bot
+     * global apagado, o el número fuera de la lista de prueba.
+     *
+     * Se cuentan aparte de las alertas porque no indican avería, pero son
+     * pacientes reales esperando y no deberían volverse invisibles.
+     */
+    private function sinAtenderPorDiseno(User $user, Carbon $desde): int
+    {
+        $lista = Settings::whatsappTestNumbers();
+        $global = Settings::whatsappBotEnabled();
+
+        if ($global && $lista === []) {
+            return 0; // Lore responde a todo el mundo: nada es intencional.
+        }
+
+        return $this->entrantes($user, $desde)
+            ->get(['conversation_id', 'id'])
+            ->groupBy('conversation_id')
+            ->filter(function ($msgs, $convId) use ($lista, $global) {
+                $conv = Conversation::find($convId);
+
+                if (! $conv || ! $conv->bot_enabled) {
+                    return false; // pausa manual: ya se ve en otro sitio
+                }
+
+                if ($global && Settings::phoneInList((string) $conv->lead?->phone, $lista)) {
+                    return false; // sí se le responde
+                }
+
+                return ! Message::where('conversation_id', $convId)
+                    ->where('id', '>', $msgs->max('id'))
+                    ->where('role', 'assistant')
+                    ->exists();
+            })
+            ->count();
     }
 
     /** Mensajes de las conversaciones reales (no las pruebas del panel). */
