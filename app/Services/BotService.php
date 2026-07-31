@@ -607,6 +607,13 @@ class BotService
             'end' => Carbon::parse($b['end'])->tz($tz),
         ], $busyRaw);
 
+        // Un horario con un pago en curso está apartado aunque todavía no sea
+        // una cita en Google: si no se descuenta aquí, Lore se lo ofrece a una
+        // segunda paciente, le cobra, y al entrar el pago no hay dónde meterla.
+        // Las reservas de ESTA conversación no cuentan: su hora sigue libre
+        // para ella.
+        $busy = array_merge($busy, PaymentLink::heldSlots($this->user->id, $tz, $this->conversation?->id));
+
         $lines = [];
         $anyFree = false;
 
@@ -690,13 +697,23 @@ class BotService
         // `payments:check-pending` agende solo cuando entre el pago: sin esto el
         // horario solo existe en la conversación y hay que esperar a que la
         // paciente vuelva a escribir.
+        $servicioPedido = trim((string) ($input['servicio'] ?? ''));
+
+        // La duración se resuelve y se GUARDA aquí, no al agendar: es la que
+        // determina cuánto tiempo queda apartado el hueco mientras paga. Sin
+        // esto se apartarían 45 minutos para un procedimiento de 90 y alguien
+        // podría meterse encima.
+        $duracion = (int) ($input['duracion_minutos'] ?? 0)
+            ?: ($this->resolveService($servicioPedido)?->duration_minutes ?? 0)
+            ?: 45;
+
         $reserva = array_filter([
             'fecha_hora' => trim((string) ($input['fecha_hora'] ?? '')) ?: null,
             'nombre_paciente' => trim((string) ($input['nombre_paciente'] ?? '')) ?: $this->conversation?->lead?->name,
-            'servicio' => trim((string) ($input['servicio'] ?? '')) ?: null,
+            'servicio' => $servicioPedido ?: null,
             'telefono' => trim((string) ($input['telefono'] ?? '')) ?: $this->conversation?->lead?->phone,
             'correo' => trim((string) ($input['correo'] ?? '')) ?: null,
-            'duracion_minutos' => (int) ($input['duracion_minutos'] ?? 0) ?: null,
+            'duracion_minutos' => $duracion,
         ], fn ($v) => filled($v));
 
         $link = $pasarela->createLink(
@@ -866,6 +883,18 @@ class BotService
             if ($start->lt($be) && $end->gt($bs)) {
                 return [
                     'message' => "ERROR: el horario de las {$start->format('h:i a')} ya está ocupado. No agendes ahí; ofrece otro horario libre.",
+                    'appointment' => null,
+                ];
+            }
+        }
+
+        // Segunda red: el hueco puede estar apartado por otra paciente que está
+        // pagando ahora mismo y cuyo pago todavía no llegó, así que en Google
+        // aún no aparece nada.
+        foreach (PaymentLink::heldSlots($this->user->id, $tz, $this->conversation?->id) as $reserva) {
+            if ($start->lt($reserva['end']) && $end->gt($reserva['start'])) {
+                return [
+                    'message' => "ERROR: el horario de las {$start->format('h:i a')} está apartado por otra paciente que tiene un pago en curso. No agendes ahí; ofrécele otro horario libre.",
                     'appointment' => null,
                 ];
             }
