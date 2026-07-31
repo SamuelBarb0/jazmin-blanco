@@ -37,6 +37,7 @@ class InboxController extends Controller
                 'lead' => $c->lead ? ['id' => $c->lead->id, 'name' => $c->lead->name, 'phone' => $c->lead->phone] : null,
                 'channel' => $c->channel,
                 'bot_enabled' => $c->bot_enabled,
+                'needs_human' => $c->needsHuman(),
                 'last_message_at' => $c->last_message_at,
                 'preview' => $c->messages()->latest('id')->value('content'),
             ]);
@@ -73,6 +74,10 @@ class InboxController extends Controller
         $conversation->forceFill([
             'bot_enabled' => $activar,
             'bot_paused_at' => $activar ? null : now(),
+            // Tocar el interruptor ya es haberse enterado del chat: la alerta de
+            // "esperando a una persona" se apaga.
+            'escalated_at' => null,
+            'escalation_reason' => null,
         ])->save();
 
         return back()->with('success', $activar
@@ -152,9 +157,14 @@ class InboxController extends Controller
         ]);
 
         // Escribir a mano implica tomar el control: si el asistente seguía
-        // activo, se pausa solo para que no responda encima.
+        // activo, se pausa solo para que no responda encima. Y si el chat estaba
+        // esperando a una persona, ya la tuvo: se apaga la alerta.
         if ($conversation->bot_enabled) {
             $conversation->forceFill(['bot_enabled' => false, 'bot_paused_at' => now()])->save();
+        }
+
+        if ($conversation->needsHuman()) {
+            $conversation->forceFill(['escalated_at' => null, 'escalation_reason' => null])->save();
         }
 
         return back();
@@ -174,6 +184,9 @@ class InboxController extends Controller
             'channel' => $conversation->channel,
             'bot_enabled' => $conversation->bot_enabled,
             'bot_paused_at' => $conversation->bot_paused_at?->toIso8601String(),
+            'needs_human' => $conversation->needsHuman(),
+            'escalated_at' => $conversation->escalated_at?->toIso8601String(),
+            'escalation_reason' => $conversation->escalation_reason,
             'lead' => $conversation->lead ? [
                 'id' => $conversation->lead->id,
                 'name' => $conversation->lead->name,

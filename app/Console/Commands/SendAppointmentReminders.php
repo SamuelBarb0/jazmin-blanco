@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\Appointment;
 use App\Models\Conversation;
+use App\Models\ReminderOptOut;
 use App\Models\User;
 use App\Services\WhatsAppService;
 use App\Support\PatientLeads;
@@ -83,6 +84,7 @@ class SendAppointmentReminders extends Command
         $enviados = 0;
         $fallidos = 0;
         $sinTelefono = 0;
+        $excluidos = 0;
 
         foreach ($this->users() as $user) {
             foreach (['2d', '1d'] as $tipo) {
@@ -92,6 +94,17 @@ class SendAppointmentReminders extends Command
                     if (! $telefono) {
                         $sinTelefono++;
                         $this->line("  <fg=yellow>sin teléfono</> {$cita->patient_name} · ".$cita->starts_at->format('d/m H:i'));
+
+                        continue;
+                    }
+
+                    // La paciente pidió que no le escribiéramos. Se comprueba
+                    // AQUÍ, después de resolver el teléfono, porque el opt-out
+                    // se guarda por número y el número puede venir de la cita o
+                    // del lead. Va antes de cualquier envío o marca.
+                    if (ReminderOptOut::has($user->id, $telefono)) {
+                        $excluidos++;
+                        $this->line("  <fg=gray>sin recordatorios</> {$cita->patient_name} · {$telefono}");
 
                         continue;
                     }
@@ -138,7 +151,7 @@ class SendAppointmentReminders extends Command
 
         $this->newLine();
         $modo = $config['template'] ? "plantilla «{$config['template']}»" : 'texto libre (solo llega dentro de la ventana de 24h)';
-        $this->info(($dry ? 'Simulación · ' : '')."Recordatorios: {$enviados} · fallidos: {$fallidos} · sin teléfono: {$sinTelefono} · modo: {$modo}");
+        $this->info(($dry ? 'Simulación · ' : '')."Recordatorios: {$enviados} · fallidos: {$fallidos} · sin teléfono: {$sinTelefono} · sin recordatorios: {$excluidos} · modo: {$modo}");
 
         return self::SUCCESS;
     }

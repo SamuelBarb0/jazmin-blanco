@@ -9,7 +9,7 @@ use Illuminate\Support\Carbon;
 
 class Conversation extends Model
 {
-    protected $fillable = ['user_id', 'lead_id', 'campaign_id', 'title', 'channel', 'referral', 'bot_enabled', 'bot_paused_at'];
+    protected $fillable = ['user_id', 'lead_id', 'campaign_id', 'title', 'channel', 'referral', 'bot_enabled', 'bot_paused_at', 'escalated_at', 'escalation_reason'];
 
     protected function casts(): array
     {
@@ -17,7 +17,19 @@ class Conversation extends Model
             'referral' => 'array',
             'bot_enabled' => 'boolean',
             'bot_paused_at' => 'datetime',
+            'escalated_at' => 'datetime',
         ];
+    }
+
+    /**
+     * ¿El asistente pidió que una persona atendiera este chat y todavía nadie lo hizo?
+     *
+     * Se apaga sola en cuanto la doctora responde o reactiva a Lore (ver
+     * InboxController): la marca es "pendiente de atender", no un histórico.
+     */
+    public function needsHuman(): bool
+    {
+        return $this->escalated_at !== null;
     }
 
     /**

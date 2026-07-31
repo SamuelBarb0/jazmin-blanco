@@ -5,11 +5,13 @@ namespace App\Services;
 use App\Models\Campaign;
 use App\Models\Conversation;
 use App\Models\PaymentLink;
+use App\Models\ReminderOptOut;
 use App\Models\Service;
 use App\Models\User;
 use App\Support\PatientLeads;
 use App\Support\Settings;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -62,7 +64,7 @@ class BotService
             ->all();
 
         $system = $this->systemPrompt($campaign);
-        $tools = $this->canSchedule() ? $this->bookingTools() : [];
+        $tools = $this->tools();
 
         // Cada foto/video se envía UNA sola vez por conversación: recolectamos las URLs
         // ya enviadas antes y las filtramos abajo. Salvo que el paciente pida verlas de
@@ -293,6 +295,82 @@ class BotService
     }
 
     /**
+     * Todas las herramientas disponibles en esta conversación.
+     *
+     * OJO con el orden de dependencias: el escalamiento a humano NO se cuelga de
+     * `canSchedule()` como las de agendar. Es deliberado — es la ruta que la
+     * política de WhatsApp exige tener siempre disponible, y justo cuando algo
+     * se rompe (agenda caída por OAuth vencido, pasarela sin responder) es
+     * cuando más falta hace poder pasarle la paciente a una persona.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function tools(): array
+    {
+        $tools = [$this->handoffTool(), $this->remindersTool()];
+
+        if ($this->canSchedule()) {
+            $tools = array_merge($tools, $this->bookingTools());
+        }
+
+        return $tools;
+    }
+
+    /**
+     * Activar o desactivar los recordatorios de cita para esta paciente.
+     *
+     * Tampoco depende de `canSchedule()`: los recordatorios los manda su propio
+     * comando, al margen de que la agenda esté conectada o no. Si dependiera,
+     * la paciente pediría que no le escribamos y no habría dónde anotarlo.
+     *
+     * @return array<string,mixed>
+     */
+    private function remindersTool(): array
+    {
+        return [
+            'name' => 'recordatorios_de_cita',
+            'description' => 'Activa o desactiva los recordatorios automáticos de cita para esta paciente. Úsala EN CUANTO la paciente pida que no le escribamos recordatorios (o que se los volvamos a enviar). Es la única forma de que su decisión se cumpla de verdad: decírselo sin usarla no sirve de nada.',
+            'input_schema' => [
+                'type' => 'object',
+                'properties' => [
+                    'recibir' => [
+                        'type' => 'boolean',
+                        'description' => 'false = la paciente NO quiere recibir más recordatorios. true = quiere volver a recibirlos.',
+                    ],
+                ],
+                'required' => ['recibir'],
+            ],
+        ];
+    }
+
+    /**
+     * Pasarle la conversación a una persona del consultorio.
+     *
+     * @return array<string,mixed>
+     */
+    private function handoffTool(): array
+    {
+        return [
+            'name' => 'escalar_a_humano',
+            'description' => 'Entrega esta conversación al equipo humano del consultorio: deja de responder tú y marca el chat como pendiente de atender para que una persona le escriba a la paciente. Úsala en el MISMO turno en el que le anuncias a la paciente que la derivas, nunca después.',
+            'input_schema' => [
+                'type' => 'object',
+                'properties' => [
+                    'motivo' => [
+                        'type' => 'string',
+                        'description' => 'Por qué se escala, en pocas palabras. Por ejemplo "la paciente pidió hablar con la doctora", "molesta por un cobro", "consulta médica específica".',
+                    ],
+                    'resumen' => [
+                        'type' => 'string',
+                        'description' => 'Resumen breve de lo conversado, para que la persona que atienda no tenga que leerlo todo. No incluyas datos clínicos ni financieros que la paciente haya escrito.',
+                    ],
+                ],
+                'required' => ['motivo'],
+            ],
+        ];
+    }
+
+    /**
      * Herramientas que el bot puede usar para agendar (Anthropic tool use).
      *
      * @return array<int,array<string,mixed>>
@@ -368,6 +446,8 @@ class BotService
     {
         try {
             return match ($name) {
+                'escalar_a_humano' => $this->toolHandoff($input),
+                'recordatorios_de_cita' => $this->toolReminders($input),
                 'consultar_disponibilidad' => $this->toolAvailability($input),
                 'agendar_cita' => $this->toolBook($input),
                 'generar_link_pago' => $this->toolPaymentLink($input),
@@ -377,6 +457,96 @@ class BotService
         } catch (Throwable $e) {
             return 'ERROR al ejecutar la herramienta: '.$e->getMessage();
         }
+    }
+
+    /**
+     * Entrega la conversación al equipo humano.
+     *
+     * Apaga al asistente en ESTE chat y la marca como pendiente de atender. La
+     * despedida sí sale: `ProcessWhatsAppMessage` comprueba `bot_enabled` ANTES
+     * de pedir la respuesta, así que el mensaje de este turno se envía completo
+     * y el silencio empieza con el siguiente mensaje de la paciente.
+     *
+     * @param  array<string,mixed>  $input
+     */
+    private function toolHandoff(array $input): string
+    {
+        $conversation = $this->conversation;
+
+        // En el panel del Asistente no hay chat real que marcar: la doctora está
+        // probando. Se deja pasar sin tocar nada (esas conversaciones ni siquiera
+        // salen en la bandeja, así que la marca quedaría colgada sin que nadie la vea).
+        if (! $conversation?->exists || $conversation->channel === 'panel') {
+            return 'Escalamiento simulado (esta es una conversación de prueba, no hay chat real que marcar). '
+                .'Despídete igual como lo harías con una paciente.';
+        }
+
+        $motivo = trim((string) ($input['motivo'] ?? ''));
+        $resumen = trim((string) ($input['resumen'] ?? ''));
+
+        $nota = trim($motivo.($resumen !== '' ? " — {$resumen}" : ''));
+
+        $conversation->forceFill([
+            'bot_enabled' => false,
+            'bot_paused_at' => now(),
+            'escalated_at' => now(),
+            'escalation_reason' => Str::limit($nota !== '' ? $nota : 'La paciente pidió hablar con una persona.', 490),
+        ])->save();
+
+        Log::info('El asistente escaló una conversación a humano', [
+            'conversation_id' => $conversation->id,
+            'motivo' => $motivo,
+        ]);
+
+        return 'Listo: el chat quedó marcado como pendiente de atender y tú ya no responderás más aquí. '
+            .'Despídete AHORA, en este mismo mensaje: dile con calidez que una persona del consultorio le escribirá por este mismo chat. '
+            .'No prometas un tiempo exacto de respuesta y no le pidas más datos.';
+    }
+
+    /**
+     * Guarda (o retira) la petición de no recibir recordatorios de cita.
+     *
+     * Se anota por TELÉFONO, no por lead: el comando de recordatorios manda al
+     * número que salga de la cita, que no siempre tiene un lead vinculado.
+     *
+     * @param  array<string,mixed>  $input
+     */
+    private function toolReminders(array $input): string
+    {
+        $conversation = $this->conversation;
+        $recibir = (bool) ($input['recibir'] ?? true);
+
+        if (! $conversation?->exists || $conversation->channel === 'panel') {
+            return 'Preferencia registrada (conversación de prueba). Confírmaselo a la paciente con naturalidad.';
+        }
+
+        $telefono = $conversation->lead?->phone;
+
+        if (blank($telefono) || strlen(ReminderOptOut::normalize($telefono)) !== 10) {
+            return 'No pude guardar la preferencia porque no tenemos un teléfono válido de esta paciente. '
+                .'Pídeselo con naturalidad y vuelve a intentarlo.';
+        }
+
+        $clave = ReminderOptOut::normalize($telefono);
+
+        if ($recibir) {
+            ReminderOptOut::where('user_id', $conversation->user_id)->where('phone', $clave)->delete();
+
+            return 'Listo: la paciente vuelve a recibir los recordatorios de sus citas. Confírmaselo con calidez.';
+        }
+
+        ReminderOptOut::updateOrCreate(
+            ['user_id' => $conversation->user_id, 'phone' => $clave],
+            ['lead_id' => $conversation->lead_id, 'source' => 'bot'],
+        );
+
+        Log::info('Paciente excluida de los recordatorios de cita', [
+            'conversation_id' => $conversation->id,
+            'lead_id' => $conversation->lead_id,
+        ]);
+
+        return 'Listo: ya no se le enviarán recordatorios automáticos de cita. Confírmaselo con calidez y aclárale '
+            .'que sí puede seguir escribiéndote por aquí cuando quiera.';
     }
 
     /**
@@ -859,6 +1029,7 @@ class BotService
         - NO ofreces consulta, diagnóstico ni seguimiento médico a distancia por este chat: la atención clínica es siempre presencial con la doctora.
         - Si no tienes la información en tu base de conocimiento, no la inventes: ofrece resolverlo en la valoración o derivar al equipo humano.
         - No le prometas al paciente que TÚ le escribirás después (recordatorios, seguimientos, promociones) a menos que él lo autorice expresamente. Tú respondes cuando él escribe.
+        - Si el paciente pide que NO le enviemos recordatorios de cita (o que se los volvamos a enviar), usa la herramienta recordatorios_de_cita en ese mismo momento. Decirle que sí y no usarla deja la promesa sin cumplir: los recordatorios le seguirían llegando.
 
         # Datos sensibles y privacidad (regla estricta)
         - NUNCA pidas datos financieros: números de tarjeta o de cuenta bancaria, claves, códigos de verificación (OTP) ni número de documento de identidad. Si el paciente los escribe por su cuenta, NO los repitas ni los confirmes en el chat.
@@ -867,8 +1038,15 @@ class BotService
         - Pide solo lo mínimo necesario para agendar: nombre, teléfono y el motivo general de la consulta.
         - Nunca compartas ni comentes información de otros pacientes.
 
-        # Escalamiento a humano
-        Si el paciente lo pide explícitamente, está molesto/frustrado, o la consulta es médica específica que requiere criterio profesional, indícale con calidez que lo derivas con el equipo de la doctora y resume brevemente lo conversado.
+        # Escalamiento a humano (tienes una herramienta para esto)
+        Para pasarle la conversación a una persona del consultorio usa la herramienta escalar_a_humano. Anunciarlo sin usarla NO sirve de nada: el paciente se queda esperando a alguien que nunca se entera. Úsala cuando:
+        - el paciente pida hablar con una persona, con la doctora o con el equipo, aunque lo diga de pasada;
+        - esté molesto, frustrado o se queje de un servicio, de un cobro o de una cita;
+        - la consulta sea médica específica y requiera criterio profesional;
+        - te pida algo que no puedes resolver con tus herramientas ni con tu base de conocimiento;
+        - diga que ya pagó y el pago no aparezca después de comprobarlo, o haya cualquier enredo con el dinero.
+        Llama la herramienta EN EL MISMO turno en que se lo dices, nunca "en el siguiente mensaje". Después de usarla despídete con calidez, avísale que una persona del consultorio le escribirá por este mismo chat y no prometas un tiempo exacto de respuesta.
+        Ante la duda, escala: es preferible que responda una persona de más y no de menos.
 
         {$schedulingBlock}
         # Material visual (fotos y videos)

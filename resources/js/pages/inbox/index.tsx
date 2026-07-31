@@ -3,7 +3,7 @@ import AppLayout from '@/layouts/app-layout';
 import { cn } from '@/lib/utils';
 import { type BreadcrumbItem, type SharedData } from '@/types';
 import { Head, router, useForm, usePage } from '@inertiajs/react';
-import { AlertTriangle, Bot, ChevronLeft, Clock, FileText, MessageCircle, Paperclip, Pause, Play, SendHorizonal, User, X } from 'lucide-react';
+import { AlertTriangle, Bot, ChevronLeft, Clock, FileText, HandHelping, MessageCircle, Paperclip, Pause, Play, SendHorizonal, User, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useRef } from 'react';
 
@@ -35,6 +35,7 @@ interface ConversationRow {
     lead: LeadRef | null;
     channel: string;
     bot_enabled: boolean;
+    needs_human: boolean;
     last_message_at: string | null;
     preview: string | null;
 }
@@ -45,6 +46,9 @@ interface Selected {
     channel: string;
     bot_enabled: boolean;
     bot_paused_at: string | null;
+    needs_human: boolean;
+    escalated_at: string | null;
+    escalation_reason: string | null;
     lead: LeadRef | null;
     window_open: boolean;
     window_closes_at: string | null;
@@ -76,6 +80,8 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
         content: '',
         archivo: null,
     });
+
+    const esperandoHumano = conversations.filter((c) => c.needs_human).length;
 
     useEffect(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -135,6 +141,16 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                     <header className="border-b border-border/60 px-4 py-3">
                         <h2 className="font-display text-lg">Conversaciones</h2>
                         <p className="text-xs text-muted-foreground">{conversations.length} chats de WhatsApp</p>
+                        {/* El contador va en la cabecera y no solo como etiqueta
+                            en cada fila: un chat escalado en la posición 30 de la
+                            lista no se ve, y la gracia del escalamiento es
+                            justamente que alguien se entere rápido. */}
+                        {esperandoHumano > 0 && (
+                            <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-medium text-rose-600 dark:text-rose-400">
+                                <HandHelping className="size-3" />
+                                {esperandoHumano === 1 ? '1 chat espera a una persona' : `${esperandoHumano} chats esperan a una persona`}
+                            </p>
+                        )}
                     </header>
 
                     <div className="flex-1 overflow-y-auto">
@@ -158,10 +174,19 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                                     <span className="shrink-0 text-[11px] text-muted-foreground">{hace(c.last_message_at)}</span>
                                 </div>
                                 <span className="truncate text-xs text-muted-foreground">{c.preview || 'Sin mensajes'}</span>
-                                {!c.bot_enabled && (
-                                    <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                                        <Pause className="size-2.5" /> Lore en pausa
+                                {/* Escalado y en pausa no son lo mismo: uno es una
+                                    alerta por atender, el otro una decisión de la
+                                    doctora. Si están los dos, manda la alerta. */}
+                                {c.needs_human ? (
+                                    <span className="inline-flex w-fit items-center gap-1 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400">
+                                        <HandHelping className="size-2.5" /> Espera a una persona
                                     </span>
+                                ) : (
+                                    !c.bot_enabled && (
+                                        <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                                            <Pause className="size-2.5" /> Lore en pausa
+                                        </span>
+                                    )
                                 )}
                             </button>
                         ))}
@@ -222,11 +247,23 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                                 </Button>
                             </header>
 
-                            {!selected.bot_enabled && (
-                                <div className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-5 py-2 text-xs text-amber-700 dark:text-amber-300">
-                                    <AlertTriangle className="size-3.5 shrink-0" />
-                                    Lore no está respondiendo en este chat. Las pacientes solo reciben lo que escribas tú.
+                            {selected.needs_human ? (
+                                <div className="flex items-start gap-2 border-b border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 md:px-5 dark:text-rose-300">
+                                    <HandHelping className="mt-0.5 size-3.5 shrink-0" />
+                                    <span>
+                                        <strong className="font-medium">Lore pidió que atendieras este chat</strong>
+                                        {selected.escalation_reason && <> — {selected.escalation_reason}</>}
+                                        <br />
+                                        Ya dejó de responder aquí. La alerta se apaga cuando le escribas o reactives a Lore.
+                                    </span>
                                 </div>
+                            ) : (
+                                !selected.bot_enabled && (
+                                    <div className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 md:px-5 dark:text-amber-300">
+                                        <AlertTriangle className="size-3.5 shrink-0" />
+                                        Lore no está respondiendo en este chat. Las pacientes solo reciben lo que escribas tú.
+                                    </div>
+                                )
                             )}
 
                             <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-4 md:px-5">
