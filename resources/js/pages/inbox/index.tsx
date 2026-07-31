@@ -87,14 +87,37 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
     }, [selected?.id, selected?.messages.length]);
 
-    // La bandeja se refresca sola: no hay tiempo real, pero una paciente que
-    // escribe aparece en menos de un minuto sin tocar nada.
+    // La bandeja se refresca sola: no hay tiempo real (ni websockets), pero una
+    // paciente que escribe aparece en unos segundos sin tocar nada.
+    //
+    // Cinco segundos y no veinte porque la doctora atiende desde el celular y
+    // veinte se sienten como "no funciona". El coste es bajo: la recarga pide
+    // solo estas dos props, no la página entera.
+    //
+    // OJO: esto es la MITAD de la espera. La otra mitad es la cola —el mensaje
+    // no existe en la base hasta que el cron levanta el worker—, así que bajar
+    // esto sin tocar el cron no se nota apenas.
     useEffect(() => {
         const id = setInterval(() => {
-            router.reload({ only: ['conversations', 'selected'] });
-        }, 20000);
+            // Con la pestaña en segundo plano no hay a quién mostrarle nada, y
+            // el móvil agradece no gastar batería ni datos.
+            if (document.visibilityState !== 'visible') return;
 
-        return () => clearInterval(id);
+            router.reload({ only: ['conversations', 'selected'] });
+        }, 5000);
+
+        // Al volver a la pestaña se refresca ya, sin esperar al siguiente ciclo.
+        const alVolver = () => {
+            if (document.visibilityState === 'visible') {
+                router.reload({ only: ['conversations', 'selected'] });
+            }
+        };
+        document.addEventListener('visibilitychange', alVolver);
+
+        return () => {
+            clearInterval(id);
+            document.removeEventListener('visibilitychange', alVolver);
+        };
     }, []);
 
     const quitarArchivo = () => {
