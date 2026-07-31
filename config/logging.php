@@ -58,6 +58,22 @@ return [
             'ignore_exceptions' => false,
         ],
 
+        /*
+         * Resumen diario, en su propio fichero.
+         *
+         * Va aparte a propósito: en producción `LOG_LEVEL` es `error`, así que
+         * un `info` en el canal normal se descartaría, y mezclado con las
+         * excepciones no habría quien lo leyera. Aquí el nivel es fijo y el
+         * fichero contiene solo resúmenes, uno por día.
+         */
+        'resumen' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/resumen.log'),
+            'level' => 'info',
+            'days' => 30,
+            'replace_placeholders' => true,
+        ],
+
         'single' => [
             'driver' => 'single',
             'path' => storage_path('logs/laravel.log'),

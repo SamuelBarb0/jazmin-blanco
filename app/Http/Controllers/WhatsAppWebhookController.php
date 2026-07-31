@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\ProcessWhatsAppMessage;
+use App\Models\DeliveryFailure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
@@ -63,8 +64,23 @@ class WhatsAppWebhookController extends Controller
                     ];
 
                     if ($estado === 'failed') {
+                        $error = (array) data_get($status, 'errors.0', []);
+
                         Log::error('WhatsApp NO entregó un mensaje.', $datos + [
                             'errores' => data_get($status, 'errors'),
+                        ]);
+
+                        // Además del log, a la base: el log en producción va en
+                        // nivel `error` y no lo lee nadie a diario, así que un
+                        // fallo así se queda invisible. Guardado, sale en el
+                        // resumen diario.
+                        DeliveryFailure::create([
+                            'phone' => (string) data_get($status, 'recipient_id'),
+                            'code' => data_get($error, 'code'),
+                            'title' => data_get($error, 'title'),
+                            'details' => data_get($error, 'error_data.details') ?: data_get($error, 'message'),
+                            'wamid' => (string) data_get($status, 'id'),
+                            'created_at' => now(),
                         ]);
                     } else {
                         Log::info('Acuse de WhatsApp.', $datos);

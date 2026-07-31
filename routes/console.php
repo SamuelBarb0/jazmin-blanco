@@ -34,3 +34,17 @@ Schedule::command('appointments:send-reminders')
 Schedule::command('payments:check-pending')
     ->everyFiveMinutes()
     ->withoutOverlapping();
+
+/*
+ * Resumen diario del estado del sistema.
+ *
+ * A las 7 de la mañana, antes de que abra el consultorio: si algo se rompió de
+ * noche, la doctora se entera al empezar el día y no por una paciente quejándose.
+ *
+ * La ventana es de 24 h para que encaje con la periodicidad y no se pierda nada
+ * entre una corrida y la siguiente.
+ */
+Schedule::command('resumen:diario')
+    ->dailyAt('07:00')
+    ->timezone('America/Bogota')
+    ->withoutOverlapping();
