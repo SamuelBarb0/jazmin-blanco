@@ -39,7 +39,21 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            /*
+             * Tiene que ser MAYOR que lo que puede tardar el job más lento, o
+             * la cola da por abandonado un job que sigue corriendo y otro
+             * worker lo reclama.
+             *
+             * El valor por defecto de Laravel (90 s) se quedaba corto: procesar
+             * un WhatsApp encadena hasta 6 llamadas a Claude, más Google
+             * Calendar y Mercado Pago. Con `ProcessWhatsAppMessage::$timeout`
+             * en 240 s, 300 deja margen por encima.
+             *
+             * Hoy casi no se nota porque el cron usa `--stop-when-empty` y rara
+             * vez hay dos workers vivos a la vez; en cuanto se quite esa
+             * bandera, tenerlos solapados pasa a ser lo normal.
+             */
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 300),
             'after_commit' => false,
         ],
 

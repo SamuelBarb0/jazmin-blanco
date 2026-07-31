@@ -31,6 +31,24 @@ class ProcessWhatsAppMessage implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
+     * Techo de duración del job, en segundos.
+     *
+     * Responder un WhatsApp tarda 3-15 s normalmente, pero el ciclo de
+     * herramientas puede encadenar hasta 6 llamadas a Claude (120 s de timeout
+     * cada una) más Google Calendar y Mercado Pago: sin techo, un job colgado
+     * puede correr varios minutos. Cuatro minutos es holgado para lo normal y
+     * corta lo que evidentemente se atascó.
+     *
+     * Debe quedar POR DEBAJO del `retry_after` de la cola (300 s), o la cola
+     * daría el job por abandonado mientras todavía corre. El servidor tiene
+     * `pcntl`, así que este límite se aplica de verdad.
+     *
+     * NO se sube `tries`: este job manda el WhatsApp ANTES de guardarlo, así
+     * que un reintento le enviaría a la paciente una segunda respuesta.
+     */
+    public int $timeout = 240;
+
+    /**
      * @param  array<string,mixed>|null  $referral  Datos del anuncio Click-to-WhatsApp.
      * @param  array<string,mixed>|null  $media  Descriptor del adjunto (kind, id, mime…).
      */
