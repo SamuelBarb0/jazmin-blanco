@@ -6,6 +6,7 @@ use App\Jobs\ProcessWhatsAppMessage;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Webhook de la WhatsApp Cloud API.
@@ -48,6 +49,27 @@ class WhatsAppWebhookController extends Controller
                 $value = data_get($change, 'value', []);
 
                 $profileName = data_get($value, 'contacts.0.profile.name');
+
+                // Acuses de entrega. Meta acepta el envío con un 200 y solo
+                // DESPUÉS avisa por aquí si el mensaje se entregó o se cayó;
+                // sin esto, un fallo de entrega es invisible y parece que todo
+                // salió bien.
+                foreach ((array) data_get($value, 'statuses', []) as $status) {
+                    $estado = (string) data_get($status, 'status');
+                    $datos = [
+                        'estado' => $estado,
+                        'para' => data_get($status, 'recipient_id'),
+                        'mensaje' => data_get($status, 'id'),
+                    ];
+
+                    if ($estado === 'failed') {
+                        Log::error('WhatsApp NO entregó un mensaje.', $datos + [
+                            'errores' => data_get($status, 'errors'),
+                        ]);
+                    } else {
+                        Log::info('Acuse de WhatsApp.', $datos);
+                    }
+                }
 
                 foreach ((array) data_get($value, 'messages', []) as $message) {
                     $waId = data_get($message, 'id');
