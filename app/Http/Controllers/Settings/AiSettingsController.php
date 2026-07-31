@@ -27,7 +27,27 @@ class AiSettingsController extends Controller
             'models' => self::MODELS,
             'bot' => Settings::botConfig(),
             'whatsappBotEnabled' => Settings::whatsappBotEnabled(),
+            'whatsappTestNumbers' => implode(', ', Settings::whatsappTestNumbers()),
         ]);
+    }
+
+    /**
+     * Lista blanca de pruebas: mientras tenga números, Lore solo le responde a
+     * esos. Vaciar el campo la desactiva y vuelve a responderle a todas.
+     */
+    public function updateWhatsappTestNumbers(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'numbers' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        Settings::setWhatsappTestNumbers($data['numbers'] ?? null);
+
+        $guardados = Settings::whatsappTestNumbers();
+
+        return back()->with('success', $guardados
+            ? 'Modo prueba activo: solo se responderá a '.count($guardados).(count($guardados) === 1 ? ' número.' : ' números.')
+            : 'Modo prueba desactivado: se responderá a todas las pacientes.');
     }
 
     /**

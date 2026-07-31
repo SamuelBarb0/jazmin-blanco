@@ -125,6 +125,19 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 return;
             }
 
+            // Modo prueba: con la lista blanca cargada, Lore SOLO le responde a
+            // esos números. Permite encender el bot y probar el canal en vivo
+            // sin que le conteste a pacientes reales; el mensaje de las demás
+            // se guarda igual y aparece en la bandeja. Lista vacía = normal.
+            $numerosDePrueba = Settings::whatsappTestNumbers();
+            if ($numerosDePrueba !== [] && ! Settings::phoneInList($this->from, $numerosDePrueba)) {
+                Log::info('Modo prueba activo: el número no está en la lista blanca, no se responde.', [
+                    'conversation_id' => $conversation->id,
+                ]);
+
+                return;
+            }
+
             // La doctora tomó el control de este chat: el mensaje queda guardado
             // y visible en la bandeja, pero el asistente no contesta.
             if (! $conversation->bot_enabled) {

@@ -20,6 +20,7 @@ class Settings
     private const KEY_GOOGLE_OAUTH = 'google_oauth';
     private const KEY_MP_ACCESS_TOKEN = 'mp_access_token';
     private const KEY_MP_PUBLIC_KEY = 'mp_public_key';
+    private const KEY_WA_TEST_NUMBERS = 'whatsapp_test_numbers';
 
     public static function get(string $key, ?string $default = null): ?string
     {
@@ -310,6 +311,78 @@ class Settings
     public static function setWhatsappBotEnabled(bool $enabled): void
     {
         self::put('whatsapp_bot_enabled', $enabled ? '1' : '0');
+    }
+
+    /**
+     * Lista blanca para probar el canal en vivo.
+     *
+     * Mientras tenga números, Lore SOLO le responde a esos; a cualquier otra
+     * paciente se le guarda el mensaje en la bandeja y no se le contesta. Vacía
+     * (lo normal) = responde a todas. NO afecta a los recordatorios de cita,
+     * que salen por su propio comando programado.
+     *
+     * @return array<int,string> Números normalizados a solo dígitos.
+     */
+    public static function whatsappTestNumbers(): array
+    {
+        return self::normalizePhones((string) self::get(self::KEY_WA_TEST_NUMBERS));
+    }
+
+    /** Acepta números separados por coma, punto y coma o saltos de línea. */
+    public static function setWhatsappTestNumbers(?string $raw): void
+    {
+        $numbers = self::normalizePhones((string) $raw);
+
+        self::put(self::KEY_WA_TEST_NUMBERS, $numbers ? implode(',', $numbers) : null);
+    }
+
+    /**
+     * ¿Está este número en la lista? Compara por los últimos 10 dígitos, así da
+     * igual que se haya escrito con indicativo o sin él: Meta entrega el `from`
+     * como `573123652269` y uno tiende a escribir `312 365 2269`.
+     *
+     * @param  array<int,string>  $list  Ya normalizada (`whatsappTestNumbers()`).
+     */
+    public static function phoneInList(string $phone, array $list): bool
+    {
+        $target = self::normalizePhone($phone);
+
+        if (strlen($target) < 8) {
+            return false;
+        }
+
+        foreach ($list as $allowed) {
+            if (str_ends_with($target, substr($allowed, -10)) || str_ends_with($allowed, substr($target, -10))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static function normalizePhone(string $phone): string
+    {
+        return (string) preg_replace('/\D+/', '', $phone);
+    }
+
+    /**
+     * Deja solo dígitos, descarta lo que sea demasiado corto para ser un
+     * teléfono (evita que un dedazo abra la puerta a media Colombia) y quita
+     * duplicados.
+     *
+     * @return array<int,string>
+     */
+    private static function normalizePhones(string $raw): array
+    {
+        // Solo coma, punto y coma o salto de línea separan: el espacio NO, porque
+        // la gente escribe "+57 312 365 2269" y partirlo por ahí deja pedazos
+        // demasiado cortos que el filtro de longitud se come.
+        $numbers = array_filter(
+            array_map(fn (string $p) => self::normalizePhone($p), preg_split('/[,;\r\n]+/', $raw) ?: []),
+            fn (string $p) => strlen($p) >= 8,
+        );
+
+        return array_values(array_unique($numbers));
     }
 
     /** Valor de la valoración que se le cobra a la paciente para apartar el cupo. */

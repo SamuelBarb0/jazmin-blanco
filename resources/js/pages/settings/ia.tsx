@@ -39,9 +39,10 @@ interface IaProps {
     models: string[];
     bot: BotConfig;
     whatsappBotEnabled: boolean;
+    whatsappTestNumbers: string;
 }
 
-export default function IaSettings({ configured, keyPreview, fromEnv, model, models, bot, whatsappBotEnabled }: IaProps) {
+export default function IaSettings({ configured, keyPreview, fromEnv, model, models, bot, whatsappBotEnabled, whatsappTestNumbers }: IaProps) {
     const { flash } = usePage<SharedData>().props;
     const [testing, setTesting] = useState(false);
 
@@ -51,6 +52,9 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
     });
 
     const botForm = useForm<BotConfig>({ ...bot });
+
+    const pruebasForm = useForm<{ numbers: string }>({ numbers: whatsappTestNumbers });
+    const enModoPrueba = whatsappTestNumbers.trim() !== '';
 
     const save: FormEventHandler = (e) => {
         e.preventDefault();
@@ -75,12 +79,19 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
     const alternarWhatsapp = () => {
         const encendiendo = !whatsappBotEnabled;
         const aviso = encendiendo
-            ? `¿Encender a ${bot.bot_name || 'Lore'} en WhatsApp? A partir de ahora responderá sola a las pacientes que escriban.`
+            ? enModoPrueba
+                ? `¿Encender a ${bot.bot_name || 'Lore'} en WhatsApp? Como el modo prueba está activo, solo responderá a los números de prueba (${whatsappTestNumbers}).`
+                : `¿Encender a ${bot.bot_name || 'Lore'} en WhatsApp? A partir de ahora responderá sola a las pacientes que escriban.`
             : `¿Poner a ${bot.bot_name || 'Lore'} en pausa? Los mensajes se seguirán recibiendo, pero nadie recibirá respuesta automática.`;
 
         if (confirm(aviso)) {
             router.put(route('ai.whatsapp'), { enabled: encendiendo }, { preserveScroll: true });
         }
+    };
+
+    const guardarPruebas: FormEventHandler = (e) => {
+        e.preventDefault();
+        pruebasForm.put(route('ai.whatsapp.numbers'), { preserveScroll: true });
     };
 
     return (
@@ -111,12 +122,16 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
                                 <div className="text-sm">
                                     <p className={`font-medium ${whatsappBotEnabled ? 'text-emerald-800 dark:text-emerald-300' : 'text-amber-800 dark:text-amber-300'}`}>
                                         {whatsappBotEnabled
-                                            ? `${bot.bot_name || 'Lore'} está respondiendo por WhatsApp`
+                                            ? enModoPrueba
+                                                ? `${bot.bot_name || 'Lore'} está respondiendo solo a los números de prueba`
+                                                : `${bot.bot_name || 'Lore'} está respondiendo por WhatsApp`
                                             : `${bot.bot_name || 'Lore'} está en pausa`}
                                     </p>
                                     <p className={whatsappBotEnabled ? 'text-emerald-700/90 dark:text-emerald-400/90' : 'text-amber-700/90 dark:text-amber-400/90'}>
                                         {whatsappBotEnabled
-                                            ? 'Cada paciente que escriba recibe respuesta automática. Puedes pausar un chat concreto desde la bandeja.'
+                                            ? enModoPrueba
+                                                ? 'Las demás pacientes siguen llegando a la bandeja, pero no reciben respuesta automática. Vacía la lista de abajo para atenderlas a todas.'
+                                                : 'Cada paciente que escriba recibe respuesta automática. Puedes pausar un chat concreto desde la bandeja.'
                                             : 'Los mensajes se reciben y quedan en la bandeja, pero nadie recibe respuesta automática. Puedes responder tú a mano.'}
                                     </p>
                                 </div>
@@ -126,6 +141,32 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
                                 {whatsappBotEnabled ? 'Poner en pausa' : 'Encender'}
                             </Button>
                         </div>
+
+                        {/* Lista blanca para probar el canal en vivo sin escribirle a pacientes reales. */}
+                        <form onSubmit={guardarPruebas} className="mt-4 border-t border-black/10 pt-4 dark:border-white/10">
+                            <Label htmlFor="numbers" className="text-sm font-medium">
+                                Números de prueba
+                            </Label>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                Si escribes algún número aquí, {bot.bot_name || 'Lore'} <strong>solo</strong> le responderá a esos. Sirve para probar
+                                el bot en vivo sin que conteste a pacientes reales. Déjalo vacío para atender a todas. No afecta a los recordatorios de
+                                cita.
+                            </p>
+                            <div className="mt-2 flex flex-wrap items-start gap-2">
+                                <Input
+                                    id="numbers"
+                                    value={pruebasForm.data.numbers}
+                                    onChange={(e) => pruebasForm.setData('numbers', e.target.value)}
+                                    placeholder="573001234567, 573109876543"
+                                    className="max-w-sm flex-1 bg-background"
+                                />
+                                <Button type="submit" variant="outline" disabled={pruebasForm.processing}>
+                                    {pruebasForm.processing && <LoaderCircle className="mr-2 size-4 animate-spin" />}
+                                    Guardar
+                                </Button>
+                            </div>
+                            <InputError message={pruebasForm.errors.numbers} className="mt-2" />
+                        </form>
                     </div>
 
                     {/* Estado actual */}
