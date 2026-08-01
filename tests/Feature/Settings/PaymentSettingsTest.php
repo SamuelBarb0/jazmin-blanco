@@ -22,6 +22,29 @@ class PaymentSettingsTest extends TestCase
 
     private const TEST = 'TEST-2222222222222222-020202-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-22222222';
 
+    public function test_la_pantalla_distingue_los_dos_juegos_y_no_expone_los_tokens(): void
+    {
+        Settings::setMercadoPago(self::LIVE, null);
+        Settings::setMercadoPago(self::TEST, null, test: true);
+        Settings::setMpTestMode(true);
+
+        $respuesta = $this->actingAs($this->usuario())->get('/settings/pagos');
+
+        $respuesta->assertOk();
+        $respuesta->assertInertia(fn ($page) => $page
+            ->component('settings/pagos')
+            ->where('testMode', true)
+            ->where('connected', true)
+            // El activo es el de prueba, y solo viaja la cola.
+            ->where('tokenHint', '…'.substr(self::TEST, -6))
+            ->where('liveHint', '…'.substr(self::LIVE, -6))
+            ->where('testHint', '…'.substr(self::TEST, -6))
+        );
+
+        $respuesta->assertDontSee(self::LIVE);
+        $respuesta->assertDontSee(self::TEST);
+    }
+
     public function test_guarda_los_dos_juegos_sin_que_uno_pise_al_otro(): void
     {
         $this->guardar([
