@@ -20,6 +20,9 @@ class Settings
     private const KEY_GOOGLE_OAUTH = 'google_oauth';
     private const KEY_MP_ACCESS_TOKEN = 'mp_access_token';
     private const KEY_MP_PUBLIC_KEY = 'mp_public_key';
+    private const KEY_MP_TEST_ACCESS_TOKEN = 'mp_test_access_token';
+    private const KEY_MP_TEST_PUBLIC_KEY = 'mp_test_public_key';
+    private const KEY_MP_TEST_MODE = 'mp_test_mode';
     private const KEY_WA_TEST_NUMBERS = 'whatsapp_test_numbers';
 
     public static function get(string $key, ?string $default = null): ?string
@@ -262,32 +265,102 @@ class Settings
      * Se guardan cifradas, como la de Anthropic. El ACCESS TOKEN es el que usa
      * la API para crear preferencias y consultar pagos; la PUBLIC KEY solo hace
      * falta si algún día se embebe el checkout en el navegador.
+     *
+     * Hay DOS juegos guardados a la vez, producción y prueba, porque conviven:
+     * el consultorio cobra de verdad y aun así se necesita poder ensayar el
+     * circuito completo (link → pago → confirmación del bot) sin mover dinero.
+     * `mp_test_mode` decide cuál se usa, y como todo el sistema pide la
+     * credencial por `mpAccessToken()`, ese interruptor cambia de golpe el bot,
+     * el cron de pagos pendientes y la pantalla de ajustes.
      */
     public static function mpAccessToken(): ?string
     {
-        return self::decrypt(self::KEY_MP_ACCESS_TOKEN);
+        return self::mpTestMode()
+            ? self::mpTestAccessToken()
+            : self::mpLiveAccessToken();
     }
 
     public static function mpPublicKey(): ?string
     {
+        return self::mpTestMode()
+            ? self::decrypt(self::KEY_MP_TEST_PUBLIC_KEY)
+            : self::decrypt(self::KEY_MP_PUBLIC_KEY);
+    }
+
+    /** Credencial de producción, la que cobra de verdad. */
+    public static function mpLiveAccessToken(): ?string
+    {
+        return self::decrypt(self::KEY_MP_ACCESS_TOKEN);
+    }
+
+    public static function mpLivePublicKey(): ?string
+    {
         return self::decrypt(self::KEY_MP_PUBLIC_KEY);
     }
 
-    public static function setMercadoPago(?string $accessToken, ?string $publicKey): void
+    /** Credencial de prueba (`TEST-…`): mismos endpoints, pero sin dinero real. */
+    public static function mpTestAccessToken(): ?string
     {
+        return self::decrypt(self::KEY_MP_TEST_ACCESS_TOKEN);
+    }
+
+    public static function mpTestPublicKey(): ?string
+    {
+        return self::decrypt(self::KEY_MP_TEST_PUBLIC_KEY);
+    }
+
+    /**
+     * ¿Se está cobrando en modo prueba?
+     *
+     * Exige que además exista la credencial de prueba: si el interruptor
+     * quedara encendido sin token, el bot se quedaría sin pasarela y volvería a
+     * creerle a la paciente que pagó. Es preferible que el modo prueba se apague
+     * solo antes que dejar ese hueco abierto.
+     */
+    public static function mpTestMode(): bool
+    {
+        return self::get(self::KEY_MP_TEST_MODE) === '1'
+            && filled(self::mpTestAccessToken());
+    }
+
+    public static function setMpTestMode(bool $enabled): void
+    {
+        self::put(self::KEY_MP_TEST_MODE, $enabled ? '1' : '0');
+    }
+
+    /**
+     * Guarda un juego de credenciales. Los campos vacíos no borran lo que ya
+     * había: la pantalla nunca devuelve el token guardado, así que un formulario
+     * en blanco significa "déjalo como está", no "bórralo".
+     */
+    public static function setMercadoPago(?string $accessToken, ?string $publicKey, bool $test = false): void
+    {
+        $tokenKey = $test ? self::KEY_MP_TEST_ACCESS_TOKEN : self::KEY_MP_ACCESS_TOKEN;
+        $publicKeyKey = $test ? self::KEY_MP_TEST_PUBLIC_KEY : self::KEY_MP_PUBLIC_KEY;
+
         if (filled($accessToken)) {
-            self::put(self::KEY_MP_ACCESS_TOKEN, Crypt::encryptString($accessToken));
+            self::put($tokenKey, Crypt::encryptString($accessToken));
         }
 
         if (filled($publicKey)) {
-            self::put(self::KEY_MP_PUBLIC_KEY, Crypt::encryptString($publicKey));
+            self::put($publicKeyKey, Crypt::encryptString($publicKey));
         }
     }
 
+    /** Desconecta del todo: se van los dos juegos y se apaga el modo prueba. */
     public static function clearMercadoPago(): void
     {
         self::put(self::KEY_MP_ACCESS_TOKEN, null);
         self::put(self::KEY_MP_PUBLIC_KEY, null);
+        self::clearMercadoPagoTest();
+    }
+
+    /** Quita solo las credenciales de prueba (y con ellas el modo prueba). */
+    public static function clearMercadoPagoTest(): void
+    {
+        self::put(self::KEY_MP_TEST_ACCESS_TOKEN, null);
+        self::put(self::KEY_MP_TEST_PUBLIC_KEY, null);
+        self::put(self::KEY_MP_TEST_MODE, '0');
     }
 
     public static function hasMercadoPago(): bool

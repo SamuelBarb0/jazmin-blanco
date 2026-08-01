@@ -35,6 +35,7 @@ Route::middleware('auth')->group(function () {
     Route::get('settings/pagos', [PaymentSettingsController::class, 'edit'])->name('payments.edit');
     Route::put('settings/pagos', [PaymentSettingsController::class, 'update'])->name('payments.update');
     Route::delete('settings/pagos', [PaymentSettingsController::class, 'destroy'])->name('payments.destroy');
+    Route::delete('settings/pagos/prueba', [PaymentSettingsController::class, 'destroyTest'])->name('payments.destroyTest');
     Route::post('settings/pagos/test', [PaymentSettingsController::class, 'test'])->name('payments.test');
 
     // Integración Google Calendar (cuenta de servicio)
