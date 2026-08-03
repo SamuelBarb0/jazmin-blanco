@@ -893,10 +893,23 @@ class BotService
         if ($porTransferencia) {
             $resultado = $this->createBooking($input + ['transferencia_por_verificar' => true]);
 
-            return $resultado['appointment']
-                ? $resultado['message']."\n\nAVISO: la cita quedó apartada pero el pago NO está verificado. "
-                    .'Recuérdale con calidez que haga la transferencia si aún no la ha hecho, y aclárale que el consultorio la confirma antes de la cita.'
-                : $resultado['message'];
+            if (! $resultado['appointment']) {
+                return $resultado['message'];
+            }
+
+            // Los datos de pago viajan AQUÍ, en el resultado de la herramienta,
+            // y no solo como regla del system prompt: ahí competían con otras
+            // instrucciones obligatorias del mismo mensaje (recordatorios,
+            // política de cancelación) y el modelo los omitía una y otra vez,
+            // dejando a la paciente con la cita apartada y sin saber a dónde
+            // transferir. En el tool result los tiene delante al escribir.
+            $datos = trim((string) (Settings::botConfig()['clinic_payment'] ?? ''));
+
+            return $resultado['message']."\n\nLa cita quedó apartada pero el pago NO está verificado."
+                .(filled($datos)
+                    ? "\n\nCOPIA ESTOS DATOS DE PAGO EN TU RESPUESTA, TAL CUAL, SIN RESUMIRLOS NI CAMBIAR UN SOLO NÚMERO. Es lo más importante del mensaje: sin ellos no tiene a dónde transferir.\n\n{$datos}"
+                    : "\n\nNO hay datos de transferencia configurados: dile que el consultorio se los envía enseguida y escala con escalar_a_humano.")
+                ."\n\nDespués de los datos, confírmale la cita con calidez y dile que el consultorio verifica el pago antes de la cita.";
         }
 
         // Con la pasarela conectada, el pago deja de depender de la palabra de
