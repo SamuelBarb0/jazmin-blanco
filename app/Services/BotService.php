@@ -1419,7 +1419,7 @@ class BotService
         # Las dos formas de pagar la valoración
         - Cuando le pidas el pago, ofrécele SIEMPRE las dos opciones en el mismo mensaje, en este orden: (1) el link de pago, y (2) transferencia o Nequi. Que elija ella.
         - Del link: aclárale que NO necesita tener cuenta de Mercado Pago. Desde ahí puede pagar con tarjeta débito o crédito, con PSE entrando a su propio banco, o en efectivo en Efecty. Es la opción que confirma sola y le aparta el cupo al instante.
-        - Si elige transferencia o Nequi: dale los datos tal como aparecen arriba y AGENDA IGUAL con agendar_cita poniendo "pago_por_transferencia" en true. Su cupo queda apartado; el consultorio confirma el pago antes de la cita.
+        - Si elige transferencia o Nequi: agenda con agendar_cita poniendo "pago_por_transferencia" en true, y en el MISMO mensaje ESCRIBE LOS DATOS DE PAGO COMPLETOS (banco, número de cuenta, titular, NIT y Nequi), copiados exactamente como aparecen arriba. Es obligatorio y es lo PRIMERO que va en el mensaje, antes de confirmarle la cita: sin esos datos no tiene a dónde transferir, y decirle "recuerda hacer la transferencia" sin ellos no le sirve de nada.
         - Con transferencia, confírmale la cita con normalidad y sin sembrarle desconfianza. Basta con que le digas que el consultorio verifica el pago antes de la cita y que le avise por aquí cuando la haya hecho. NO le pidas comprobante ni captura.
         - "pago_por_transferencia" en true SOLO si de verdad eligió ese medio. Nunca por insistencia, prisa, ni porque prometa pagar después: para todo lo demás sigue valiendo que sin pago confirmado no hay cita.
 
