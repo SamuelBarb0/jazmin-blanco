@@ -34,6 +34,7 @@ class ServiceController extends Controller
                 'agendadas' => (int) ($stages->firstWhere('slug', 'agendado')?->leads_count ?? 0),
                 'cerradas' => (int) $stages->where('is_won', true)->sum('leads_count'),
                 'wonValue' => (float) (clone $leads)->whereIn('stage_id', $stages->where('is_won', true)->pluck('id'))->sum('value'),
+                'botSeconds' => self::botResponseSeconds($user),
             ],
             'pipeline' => $stages->map(fn ($s) => ['name' => $s->name, 'count' => $s->leads_count, 'color' => $s->color])->values(),
             'channels' => $channels->values(),
@@ -44,6 +45,60 @@ class ServiceController extends Controller
             'recentServices' => $user->services()->latest()->take(5)->get(),
             'aiConfigured' => AnthropicService::fromConfig()->isConfigured(),
         ]);
+    }
+
+    /**
+     * Cuánto tarda Lore en contestar, medido de verdad.
+     *
+     * Se mide sobre pares consecutivos pregunta→respuesta en WhatsApp, y se
+     * devuelve la MEDIANA y no la media porque un solo caso raro —un job que se
+     * quedó esperando la cola— desplaza la media y haría parecer lento un bot
+     * que normalmente contesta en segundos.
+     *
+     * Se descartan: las respuestas escritas a mano por la doctora (no miden al
+     * bot) y los huecos de más de 5 minutos (ahí no se midió una respuesta,
+     * se midió que la paciente volvió a escribir mucho después).
+     *
+     * `null` cuando todavía no hay conversaciones suficientes: la tarjeta
+     * prefiere no decir nada antes que enseñar un número inventado.
+     */
+    private static function botResponseSeconds($user): ?int
+    {
+        $tiempos = [];
+
+        $conversaciones = $user->conversations()
+            ->where('channel', 'whatsapp')
+            ->with(['messages' => fn ($q) => $q->orderBy('id')])
+            ->get();
+
+        foreach ($conversaciones as $conversacion) {
+            $mensajes = $conversacion->messages->values();
+
+            foreach ($mensajes as $i => $mensaje) {
+                $siguiente = $mensajes[$i + 1] ?? null;
+
+                if ($mensaje->role !== 'user'
+                    || ! $siguiente
+                    || $siguiente->role !== 'assistant'
+                    || $siguiente->sent_by === 'human') {
+                    continue;
+                }
+
+                $segundos = $mensaje->created_at->diffInSeconds($siguiente->created_at);
+
+                if ($segundos >= 0 && $segundos <= 300) {
+                    $tiempos[] = $segundos;
+                }
+            }
+        }
+
+        if (count($tiempos) < 5) {
+            return null;
+        }
+
+        sort($tiempos);
+
+        return (int) round($tiempos[intdiv(count($tiempos), 2)]);
     }
 
     public function index(Request $request): Response

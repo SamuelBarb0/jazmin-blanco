@@ -3,19 +3,19 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { LiquidCard } from '@/components/ui/liquid-card';
 import { RadialGauge } from '@/components/ui/radial-gauge';
-import { Sparkline } from '@/components/ui/sparkline';
 import AppLayout from '@/layouts/app-layout';
 import { channelMeta, colorOf } from '@/lib/crm';
 import { cn } from '@/lib/utils';
 import { type BreadcrumbItem, type LeadChannel, type Service } from '@/types';
 import { Head, Link } from '@inertiajs/react';
 import { motion, type Variants } from 'motion/react';
-import { ArrowUpRight, BookOpen, Bot, CalendarCheck, Megaphone, Plus, Sparkles, TrendingDown, TrendingUp, Users } from 'lucide-react';
+import { ArrowUpRight, BookOpen, Bot, CalendarCheck, Plus, Sparkles, TrendingUp, Users } from 'lucide-react';
 
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Centro de comando', href: '/dashboard' }];
 
 interface DashboardProps {
-    metrics: { leads: number; leadsMonth: number; agendadas: number; cerradas: number; wonValue: number };
+    /** `botSeconds` es la mediana real de respuesta de Lore; null si aún no hay conversaciones suficientes. */
+    metrics: { leads: number; leadsMonth: number; agendadas: number; cerradas: number; wonValue: number; botSeconds: number | null };
     pipeline: { name: string; count: number; color: string }[];
     channels: { key: LeadChannel; count: number; pct: number }[];
     servicesStats: { total: number; withAi: number };
@@ -31,22 +31,24 @@ const item: Variants = {
     show: { opacity: 1, y: 0, filter: 'blur(0px)', transition: { duration: 0.75, ease: [0.16, 1, 0.3, 1] } },
 };
 
-// Sparklines decorativas (tendencia ilustrativa).
-const sparks = {
-    leads: [820, 910, 880, 1040, 1120, 1080, 1240],
-    agendadas: [41, 47, 52, 49, 63, 70, 78],
-    cpla: [58, 55, 51, 49, 46, 44, 42],
-    bot: [22, 19, 17, 14, 12, 10, 8],
-};
+// Antes había aquí sparklines y porcentajes de variación inventados. Se
+// quitaron: una cifra real con un "+12,4%" falso al lado se lee entera como
+// cierta, y es peor que no enseñar nada — sobre todo si alguien decide algo
+// mirándola. Cuando haya histórico de verdad se calculan y vuelven.
 
 export default function Dashboard({ metrics, pipeline, channels, servicesStats, recentServices, aiConfigured }: DashboardProps) {
     const maxPipeline = Math.max(1, ...pipeline.map((p) => p.count));
 
+    // Se quitó «CPLA real»: para calcularlo hace falta el gasto de Meta (que no
+    // se guarda) y citas atribuidas a una campaña (que hoy son 0), así que la
+    // tarjeta solo podía enseñar un número de muestra.
     const kpis = [
-        { key: 'leads', label: 'Leads del mes', value: metrics.leadsMonth || metrics.leads, icon: Users, accent: 'text-chart-1', delta: 12.4, up: true, spark: sparks.leads, fmt: (n: number) => Math.round(n).toLocaleString('es-CO'), sample: false },
-        { key: 'agendadas', label: 'Citas agendadas', value: metrics.agendadas, icon: CalendarCheck, accent: 'text-chart-3', delta: 9.1, up: true, spark: sparks.agendadas, fmt: (n: number) => Math.round(n).toString(), sample: false },
-        { key: 'cpla', label: 'CPLA real', value: 42000, icon: Megaphone, accent: 'text-chart-4', delta: 6.2, up: false, spark: sparks.cpla, fmt: (n: number) => cop(Math.round(n / 1000) * 1000), sample: true },
-        { key: 'bot', label: 'Resp. del bot', value: 8, icon: Bot, accent: 'text-chart-2', delta: 31, up: false, spark: sparks.bot, fmt: (n: number) => `${Math.round(n)}s`, sample: true },
+        { key: 'leads', label: 'Leads del mes', value: metrics.leadsMonth || metrics.leads, icon: Users, accent: 'text-chart-1', fmt: (n: number) => Math.round(n).toLocaleString('es-CO') },
+        { key: 'agendadas', label: 'Citas agendadas', value: metrics.agendadas, icon: CalendarCheck, accent: 'text-chart-3', fmt: (n: number) => Math.round(n).toString() },
+        { key: 'cerradas', label: 'Cerradas', value: metrics.cerradas, icon: CalendarCheck, accent: 'text-chart-4', fmt: (n: number) => Math.round(n).toString() },
+        // Mediana real de lo que tarda Lore en contestar. Sin conversaciones
+        // suficientes llega null y la tarjeta lo dice, en vez de inventarlo.
+        { key: 'bot', label: 'Resp. del bot', value: metrics.botSeconds ?? 0, icon: Bot, accent: 'text-chart-2', fmt: (n: number) => `${Math.round(n)}s`, empty: metrics.botSeconds === null ? 'Sin datos aún' : null },
     ];
 
     const channelBar: Record<string, string> = { whatsapp: 'bg-emerald-500', instagram: 'bg-pink-500', meta_ads: 'bg-sky-500' };
@@ -106,25 +108,17 @@ export default function Dashboard({ metrics, pipeline, channels, servicesStats, 
                     {kpis.map((k) => (
                         <LiquidCard key={k.key} variants={item} whileHover={{ y: -5 }} transition={{ type: 'spring', stiffness: 300, damping: 22 }} className="group relative overflow-hidden rounded-2xl p-5">
                             <div className="flex items-start justify-between">
-                                <span className="text-muted-foreground flex items-center gap-1.5 text-sm">
-                                    {k.label}
-                                    {k.sample && <span className="text-muted-foreground/60 text-[10px]">· muestra</span>}
-                                </span>
+                                <span className="text-muted-foreground flex items-center gap-1.5 text-sm">{k.label}</span>
                                 <span className={cn('bg-muted flex size-9 items-center justify-center rounded-lg', k.accent)}>
                                     <k.icon className="size-4.5" />
                                 </span>
                             </div>
                             <div className="font-display mt-3 truncate text-3xl leading-none tracking-tight tabular-nums sm:text-4xl">
-                                <AnimatedNumber value={k.value} format={k.fmt} />
-                            </div>
-                            <div className="mt-3 flex items-end justify-between gap-2">
-                                <span className={cn('inline-flex items-center gap-1 text-xs font-medium', k.up ? 'text-emerald-600 dark:text-emerald-400' : 'text-sky-600 dark:text-sky-400')}>
-                                    {k.up ? <TrendingUp className="size-3.5" /> : <TrendingDown className="size-3.5" />}
-                                    {k.delta}%
-                                </span>
-                                <div className={cn('h-9 w-24', k.accent)}>
-                                    <Sparkline data={k.spark} className="h-full w-full" />
-                                </div>
+                                {k.empty ? (
+                                    <span className="text-muted-foreground/70 text-xl">{k.empty}</span>
+                                ) : (
+                                    <AnimatedNumber value={k.value} format={k.fmt} />
+                                )}
                             </div>
                         </LiquidCard>
                     ))}
