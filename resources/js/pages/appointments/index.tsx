@@ -176,6 +176,16 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
         }
     };
 
+    // La doctora confirmó en el banco que la transferencia llegó. Se pide
+    // confirmación porque quita el aviso también del calendario: si se pulsa
+    // por error, la cita deja de verse como pendiente y nadie vuelve a mirarla.
+    const verifyTransfer = (a: Appointment) => {
+        if (confirm(`¿Confirmas que ya recibiste la transferencia de "${a.patient_name}"? Se quitará el aviso de la cita y de Google Calendar.`)) {
+            setDetail(null);
+            router.patch(route('appointments.verify-transfer', a.id), {}, { preserveScroll: true });
+        }
+    };
+
     // Mapa día (AAAA-MM-DD) -> citas, ordenadas por hora.
     const byDay = useMemo(() => {
         const map = new Map<string, Appointment[]>();
@@ -411,6 +421,11 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                                                 <CheckCircle2 className="size-3 text-emerald-500" />
                                                             ) : null)}
                                                     </span>
+                                                    {a.transfer_pending_at && (
+                                                        <span className="mt-1 ml-1 inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">
+                                                            <AlertTriangle className="size-3" /> Verificar transferencia
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                                                     <Button
@@ -628,6 +643,21 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                 <p className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
                                     {detail.google_sync_error}
                                 </p>
+                            )}
+
+                            {detail.transfer_pending_at && (
+                                <div className="space-y-2 rounded-lg border border-orange-300/60 bg-orange-50 px-3 py-3 dark:border-orange-500/30 dark:bg-orange-500/10">
+                                    <p className="flex items-center gap-1.5 text-sm font-medium text-orange-800 dark:text-orange-300">
+                                        <AlertTriangle className="size-4 shrink-0" /> Transferencia sin verificar
+                                    </p>
+                                    <p className="text-xs text-orange-800/80 dark:text-orange-300/80">
+                                        La paciente eligió pagar por transferencia o Nequi, así que el cupo se apartó sin comprobante.
+                                        Revisa en el banco que el dinero llegó antes de atenderla.
+                                    </p>
+                                    <Button size="sm" onClick={() => verifyTransfer(detail)}>
+                                        <CheckCircle2 className="h-4 w-4" /> Ya recibí el pago
+                                    </Button>
+                                </div>
                             )}
 
                             <DialogFooter>

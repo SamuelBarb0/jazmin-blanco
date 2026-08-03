@@ -133,6 +133,8 @@ export interface Appointment {
     google_event_id: string | null;
     google_synced_at: string | null;
     google_sync_error: string | null;
+    /** Se apartó pagando por transferencia y nadie ha confirmado aún que el dinero llegó. */
+    transfer_pending_at: string | null;
     created_at: string;
     updated_at: string;
     service?: { id: number; name: string } | null;

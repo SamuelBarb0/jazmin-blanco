@@ -44,6 +44,7 @@ Route::middleware(['auth'])->group(function () {
     Route::resource('appointments', AppointmentController::class)->only(['index', 'store', 'update', 'destroy']);
     // Importa las citas existentes del calendario principal de la doctora
     Route::post('appointments/import', [AppointmentController::class, 'importFromGoogle'])->name('appointments.import');
+    Route::patch('appointments/{appointment}/transferencia', [AppointmentController::class, 'verifyTransfer'])->name('appointments.verify-transfer');
 
     // Campañas de Meta (contexto de origen para el bot)
     Route::post('campaigns/import', [CampaignController::class, 'import'])->name('campaigns.import');

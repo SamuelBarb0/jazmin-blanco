@@ -271,6 +271,30 @@ class AppointmentController extends Controller
         return $data;
     }
 
+    /**
+     * La doctora confirmó en el banco que la transferencia llegó.
+     *
+     * Quita la marca y vuelve a sincronizar con Google para que el evento
+     * pierda el «⚠️ VERIFICAR TRANSFERENCIA» del título: si solo se limpiara en
+     * la base, el aviso seguiría en el calendario, que es justo donde ella lo
+     * mira, y dejaría de significar nada.
+     */
+    public function verifyTransfer(Request $request, Appointment $appointment): RedirectResponse
+    {
+        $this->authorizeAppointment($request, $appointment);
+
+        if (! $appointment->transfer_pending_at) {
+            return back()->with('success', 'Esa cita no tenía ninguna transferencia pendiente.');
+        }
+
+        $appointment->forceFill(['transfer_pending_at' => null])->save();
+
+        $this->syncToGoogle($appointment);
+
+        return back()->with('success', 'Transferencia verificada: la cita de '
+            .$appointment->patient_name.' queda confirmada.');
+    }
+
     private function authorizeAppointment(Request $request, Appointment $appointment): void
     {
         abort_unless($appointment->user_id === $request->user()->id, 403);
