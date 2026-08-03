@@ -39,6 +39,12 @@ class BotService
      */
     private ?Conversation $conversation = null;
 
+    /**
+     * Datos de transferencia que hay que anexar a la respuesta porque se acaba
+     * de apartar una cita por ese medio. Ver `conDatosDePago()`.
+     */
+    private ?string $datosPagoPorAnexar = null;
+
     public function __construct(
         private readonly User $user,
         private readonly AnthropicService $ai,
@@ -178,7 +184,47 @@ class BotService
             $result['media'] = $this->lastSentMedia($conversation);
         }
 
+        $result['text'] = $this->conDatosDePago($result['text']);
+
         return $result;
+    }
+
+    /**
+     * Añade los datos de transferencia cuando se acaba de apartar una cita por
+     * ese medio y el modelo no los escribió.
+     *
+     * Se hace por código y no pidiéndoselo al prompt porque pidiéndoselo NO
+     * funciona: se intentó como regla del system prompt, como excepción a la
+     * norma de brevedad y hasta metiendo los datos en el propio resultado de la
+     * herramienta, y en las cinco pruebas el modelo confirmó la cita y se los
+     * saltó. Compiten demasiadas instrucciones obligatorias en ese mismo
+     * mensaje (recordatorios, política de cancelación, dirección).
+     *
+     * Y aquí equivocarse cuesta caro: la paciente se queda con el cupo apartado,
+     * creyendo que debe transferir, y sin saber a qué cuenta.
+     *
+     * Solo se añade si NO están ya: si el modelo los escribió, se respeta su
+     * redacción y no se duplica nada.
+     */
+    private function conDatosDePago(string $text): string
+    {
+        if (blank($this->datosPagoPorAnexar)) {
+            return $text;
+        }
+
+        $datos = $this->datosPagoPorAnexar;
+        $this->datosPagoPorAnexar = null;
+
+        // Basta con mirar si ya aparece alguno de los números largos: si el
+        // modelo los copió, el texto los contiene tal cual.
+        preg_match_all('/\d{7,}/', $datos, $numeros);
+        foreach ($numeros[0] as $numero) {
+            if (str_contains($text, $numero)) {
+                return $text;
+            }
+        }
+
+        return trim($text)."\n\n".trim($datos);
     }
 
     /**
@@ -904,6 +950,9 @@ class BotService
             // dejando a la paciente con la cita apartada y sin saber a dónde
             // transferir. En el tool result los tiene delante al escribir.
             $datos = trim((string) (Settings::botConfig()['clinic_payment'] ?? ''));
+
+            // Red de seguridad: si el modelo no los escribe, los anexa el código.
+            $this->datosPagoPorAnexar = $datos ?: null;
 
             return $resultado['message']."\n\nLa cita quedó apartada pero el pago NO está verificado."
                 .(filled($datos)
