@@ -23,16 +23,25 @@ Schedule::command('appointments:send-reminders')
 /*
  * Pagos pendientes: agenda la cita en cuanto entra el pago.
  *
- * Cada cinco minutos, no cada minuto: el link vive 24 horas y a la paciente no
- * le cambia nada esperar unos minutos, mientras que consultar la pasarela por
- * cada link vivo sesenta veces por hora no aporta.
+ * Cada minuto. Antes eran cinco, con el argumento de que a la paciente no le
+ * cambiaba nada esperar un rato; probándolo se vio que sí le cambia: acaba de
+ * pagar y se queda mirando el chat sin saber si el pago entró, que es justo el
+ * momento en que uno duda de si le cobraron bien.
+ *
+ * Sale casi gratis porque el barrido pregunta ANTES a la base: sin links vivos
+ * es una sola consulta y ni siquiera toca la pasarela; solo la consulta por los
+ * links que de verdad están esperando pago, que son uno o dos como mucho.
+ *
+ * `withoutOverlapping` importa más ahora: si una corrida se alarga (la pasarela
+ * lenta, varios links), la siguiente se salta en vez de pisarla.
  *
  * No lo hace un webhook de Mercado Pago a propósito: un barrido no depende de
  * que la notificación llegue ni de que el endpoint esté accesible, y recupera
- * solo si una corrida falla.
+ * solo si una corrida falla. Un webhook encima de esto bajaría la espera a
+ * segundos, pero el barrido debe quedarse igual como red de seguridad.
  */
 Schedule::command('payments:check-pending')
-    ->everyFiveMinutes()
+    ->everyMinute()
     ->withoutOverlapping();
 
 /*
