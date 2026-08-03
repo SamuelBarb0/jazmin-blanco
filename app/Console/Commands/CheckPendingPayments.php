@@ -58,8 +58,12 @@ class CheckPendingPayments extends Command
         $vencidos = 0;
 
         foreach ($this->users() as $user) {
+            // `PAGADO` entra a propósito, siempre que le falte la cita: si el
+            // pago llegó y agendar falló, antes el link quedaba huérfano PARA
+            // SIEMPRE, porque al pasar a PAID salía de este filtro y nadie
+            // volvía a mirarlo. La ventana de gracia acota los reintentos.
             $pendientes = PaymentLink::where('user_id', $user->id)
-                ->whereIn('status', ['ACTIVE', 'PENDING', 'PROCESSING'])
+                ->whereIn('status', ['ACTIVE', 'PENDING', 'PROCESSING', PaymentLink::PAGADO])
                 ->whereNull('appointment_id')
                 ->where(fn ($q) => $q->whereNull('expires_at')
                     ->orWhere('expires_at', '>', now()->subHours(self::GRACIA_HORAS)))
@@ -68,6 +72,26 @@ class CheckPendingPayments extends Command
 
             foreach ($pendientes as $link) {
                 $revisados++;
+
+                // Pagado pero sin cita: el dinero ya entró, lo que falló fue
+                // agendar. No hay que volver a preguntarle a la pasarela, solo
+                // reintentar la cita por si el hueco se liberó o Google volvió.
+                if ($link->status === PaymentLink::PAGADO) {
+                    if ($dry) {
+                        $this->line("  <fg=cyan>[{$link->reference}]</> pagado sin cita"
+                            .($link->canAutoBook() ? ' · reintentaría agendar '.$link->booking['fecha_hora'] : ' · sin horario guardado'));
+
+                        continue;
+                    }
+
+                    // En silencio: el primer fallo ya se registró como error, y
+                    // repetirlo cada 5 minutos durante horas taparía el log.
+                    if ($link->canAutoBook() && $this->agendar($user, $link, silencioso: true)) {
+                        $agendadas++;
+                    }
+
+                    continue;
+                }
 
                 try {
                     $estado = $pasarela->linkStatus($link->reference);
@@ -140,18 +164,26 @@ class CheckPendingPayments extends Command
         return self::SUCCESS;
     }
 
-    /** Crea la cita del link ya pagado y se la confirma a la paciente. */
-    private function agendar(User $user, PaymentLink $link): bool
+    /**
+     * Crea la cita del link ya pagado y se la confirma a la paciente.
+     *
+     * `$silencioso` es para los REINTENTOS de un link que ya quedó pagado sin
+     * cita: el fallo original ya se registró, así que repetirlo en cada barrido
+     * solo llenaría el log. Si el reintento funciona, se avisa igual.
+     */
+    private function agendar(User $user, PaymentLink $link, bool $silencioso = false): bool
     {
         $bot = BotService::fromUser($user)->forConversation($link->conversation);
 
         try {
             $resultado = $bot->createBooking($link->booking);
         } catch (Throwable $e) {
-            Log::error('No se pudo agendar automáticamente tras el pago', [
-                'payment_link_id' => $link->id,
-                'error' => $e->getMessage(),
-            ]);
+            if (! $silencioso) {
+                Log::error('No se pudo agendar automáticamente tras el pago', [
+                    'payment_link_id' => $link->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
             $this->error("      error al agendar: {$e->getMessage()}");
 
             return false;
@@ -160,10 +192,17 @@ class CheckPendingPayments extends Command
         if (! $resultado['appointment']) {
             // El horario se ocupó entre que pagó y que lo detectamos. La cita no
             // se pierde: queda el pago registrado y la doctora lo ve.
-            Log::warning('Pago confirmado pero no se pudo agendar', [
-                'payment_link_id' => $link->id,
-                'motivo' => $resultado['message'],
-            ]);
+            //
+            // Va como ERROR y no como warning aunque no sea una excepción: en
+            // producción `LOG_LEVEL=error` descarta los warning, y este es
+            // justo el caso que NO puede pasar desapercibido — hay dinero
+            // cobrado sin cita. Pasó de verdad el 2026-08-03 y no dejó rastro.
+            if (! $silencioso) {
+                Log::error('Pago confirmado pero no se pudo agendar', [
+                    'payment_link_id' => $link->id,
+                    'motivo' => $resultado['message'],
+                ]);
+            }
             $this->line('      <fg=yellow>no se pudo agendar</>: '.$resultado['message']);
 
             return false;
@@ -202,7 +241,7 @@ class CheckPendingPayments extends Command
             $enviado = WhatsAppService::fromConfig()->sendText($telefono, $texto);
         } catch (Throwable $e) {
             $enviado = false;
-            Log::warning('No se pudo avisar del pago confirmado', [
+            Log::error('No se pudo avisar del pago confirmado', [
                 'payment_link_id' => $link->id,
                 'error' => $e->getMessage(),
             ]);

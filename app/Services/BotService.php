@@ -24,6 +24,15 @@ use Throwable;
 class BotService
 {
     /**
+     * Cuánto se supone que dura una cita cuando el servicio no lo dice.
+     *
+     * Vive aquí como constante porque la usan DOS sitios que tienen que estar
+     * de acuerdo: el cálculo de horarios libres y el de agendar. Cuando no lo
+     * estaban, se ofrecían huecos donde la cita no cabía.
+     */
+    private const DURACION_POR_DEFECTO = 45;
+
+    /**
      * Conversación que se está atendiendo. La guardamos para que al agendar se
      * pueda vincular la cita al paciente que ya venía chateando, en vez de
      * adivinarlo por el teléfono que escriba en el mensaje.
@@ -429,6 +438,7 @@ class BotService
                     'properties' => [
                         'fecha' => ['type' => 'string', 'description' => 'Fecha de inicio a consultar en formato YYYY-MM-DD. Si se omite, se usa hoy.'],
                         'dias' => ['type' => 'integer', 'description' => 'Cuántos días consecutivos revisar a partir de la fecha (1 a 7). Por defecto 3. Usa más si el paciente pregunta "esta semana" o no tiene un día fijo.'],
+                        'servicio' => ['type' => 'string', 'description' => 'Servicio o motivo de la cita, si ya lo sabes. Es IMPORTANTE pasarlo: cada procedimiento dura distinto, y sin él se calculan los huecos con una duración estándar y puede ofrecerse una hora donde el procedimiento no cabe.'],
                     ],
                     'required' => [],
                 ],
@@ -624,6 +634,14 @@ class BotService
         $hours = Settings::scheduleHours();
         $slotMin = max(15, Settings::scheduleSlotMinutes());
 
+        // Cuánto ocupará DE VERDAD la cita, que no es lo mismo que cada cuánto
+        // empieza un hueco. Sin esto se ofrecían horas donde el procedimiento no
+        // cabía: con huecos de 30 min, las 13:30 se medían como 13:30-14:00 y
+        // salían libres aunque a las 14:00 hubiera algo, pero la cita real de 45
+        // min llegaba hasta las 14:15 y `createBooking` la rechazaba. La paciente
+        // ya había PAGADO para entonces, así que el error se cobraba.
+        $duracion = max(15, (int) ($this->resolveService((string) ($input['servicio'] ?? ''))?->duration_minutes ?: self::DURACION_POR_DEFECTO));
+
         // Una sola llamada a freeBusy para todo el rango.
         $rangeEnd = $start->copy()->addDays($days - 1)->endOfDay();
         $busyRaw = GoogleCalendarService::fromConfig()->busyTimes(
@@ -661,9 +679,12 @@ class BotService
             $close = $day->copy()->setTimeFromTimeString($window[1]);
 
             $slots = [];
-            for ($t = $open->copy(); $t->copy()->addMinutes($slotMin)->lte($close); $t->addMinutes($slotMin)) {
+            // Se AVANZA de $slotMin en $slotMin (cada cuánto puede empezar una
+            // cita) pero se COMPRUEBA $duracion (cuánto ocupa), y el hueco solo
+            // vale si la cita entera cabe antes de cerrar.
+            for ($t = $open->copy(); $t->copy()->addMinutes($duracion)->lte($close); $t->addMinutes($slotMin)) {
                 $slotStart = $t->copy();
-                $slotEnd = $t->copy()->addMinutes($slotMin);
+                $slotEnd = $t->copy()->addMinutes($duracion);
 
                 if ($slotStart->lte($now)) {
                     continue; // ya pasó
@@ -897,7 +918,7 @@ class BotService
         $requested = trim((string) ($input['servicio'] ?? ''));
         $service = $this->resolveService($requested);
 
-        $duration = (int) ($input['duracion_minutos'] ?? $service?->duration_minutes ?: 45);
+        $duration = (int) ($input['duracion_minutos'] ?? $service?->duration_minutes ?: self::DURACION_POR_DEFECTO);
         $end = $start->copy()->addMinutes($duration);
 
         // Re-verifica que no se solape con algo ya ocupado.
