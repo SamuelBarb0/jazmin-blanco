@@ -29,10 +29,16 @@ class SendAppointmentReminders extends Command
                             {--force : Envía aunque sea fuera de la franja horaria decente}
                             {--user= : Id o correo de la doctora (por defecto, todas)}';
 
-    protected $description = 'Envía por WhatsApp los recordatorios de cita (2 días antes y 24 horas antes)';
+    protected $description = 'Envía por WhatsApp los recordatorios de cita (24 horas antes y 2 horas antes)';
 
-    /** No molestar con un recordatorio si la cita es prácticamente ya. */
-    private const MARGEN_MINIMO_HORAS = 2;
+    /**
+     * Frontera entre los dos avisos, en horas.
+     *
+     * Debajo de ella toca el recordatorio del mismo día; por encima, y hasta las
+     * 24 h, el de la víspera. Es el mismo número para los dos porque son tramos
+     * contiguos: así ninguna cita se queda entre medias sin ningún aviso.
+     */
+    private const HORAS_AVISO_CORTO = 2;
 
     /** Franja en la que es aceptable escribirle a una paciente (hora del consultorio). */
     private const HORA_DESDE = 7;
@@ -87,7 +93,9 @@ class SendAppointmentReminders extends Command
         $excluidos = 0;
 
         foreach ($this->users() as $user) {
-            foreach (['2d', '1d'] as $tipo) {
+            // El de 24 h primero: si una cita cayera en los dos tramos (recién
+            // agendada a menos de 2 h, por ejemplo), manda el más informativo.
+            foreach (['24h', '2h'] as $tipo) {
                 foreach ($this->pendientes($user, $tipo, $ahora) as $cita) {
                     $telefono = $this->telefono($cita, $config['country_code']);
 
@@ -138,7 +146,7 @@ class SendAppointmentReminders extends Command
                     // La marca se pone SIEMPRE que el envío salió bien, para no
                     // repetir el recordatorio en la siguiente corrida.
                     $cita->forceFill([
-                        $tipo === '2d' ? 'reminder_2d_sent_at' : 'reminder_1d_sent_at' => now(),
+                        $tipo === '2h' ? 'reminder_2h_sent_at' : 'reminder_24h_sent_at' => now(),
                     ])->save();
 
                     $this->registrarEnConversacion($cita, $texto);
@@ -159,18 +167,27 @@ class SendAppointmentReminders extends Command
     /**
      * Citas que toca recordar ahora.
      *
-     * - 2d: la cita cae entre 24 y 48 horas a futuro.
-     * - 1d: la cita cae entre el margen mínimo y 24 horas a futuro.
+     * - 24h: la cita cae entre 2 y 24 horas a futuro.
+     * - 2h: la cita cae dentro de las próximas 2 horas.
+     *
+     * Cada tramo dispara en la PRIMERA corrida en que la cita entra en su
+     * ventana, no en un instante exacto: como el comando corre cada hora, el
+     * aviso de 2 h llega entre 1 y 2 horas antes, y el de 24 h en cuanto quedan
+     * menos de 24. Que la ventana sea un rango y no un punto es lo que hace que
+     * una corrida perdida (o la franja nocturna) la recupere la siguiente en
+     * vez de saltarse el aviso para siempre.
+     *
+     * `$desde` = ahora en el tramo corto: una cita que ya empezó no se recuerda.
      *
      * @return Collection<int,Appointment>
      */
     private function pendientes(User $user, string $tipo, Carbon $ahora): Collection
     {
-        $columna = $tipo === '2d' ? 'reminder_2d_sent_at' : 'reminder_1d_sent_at';
+        $columna = $tipo === '2h' ? 'reminder_2h_sent_at' : 'reminder_24h_sent_at';
 
-        [$desde, $hasta] = $tipo === '2d'
-            ? [$ahora->copy()->addHours(24), $ahora->copy()->addHours(48)]
-            : [$ahora->copy()->addHours(self::MARGEN_MINIMO_HORAS), $ahora->copy()->addHours(24)];
+        [$desde, $hasta] = $tipo === '2h'
+            ? [$ahora->copy(), $ahora->copy()->addHours(self::HORAS_AVISO_CORTO)]
+            : [$ahora->copy()->addHours(self::HORAS_AVISO_CORTO), $ahora->copy()->addHours(24)];
 
         return $user->appointments()
             ->whereNull($columna)
@@ -206,10 +223,29 @@ class SendAppointmentReminders extends Command
         return $codigoPais.$d;
     }
 
-    /** "en 2 días" / "mañana" / "hoy", según el tiempo real que falte. */
+    /**
+     * "en 2 horas" / "mañana" / "hoy", según el tiempo real que falte.
+     *
+     * Cuando quedan pocas horas se dice en HORAS y no "hoy": es el aviso de
+     * última hora, y su gracia está justo en que la paciente sepa cuánto le
+     * queda para salir de casa. "Hoy" no le dice eso.
+     */
     private function cuando(Appointment $cita, Carbon $ahora, string $tz): string
     {
         $inicio = $cita->starts_at->copy()->shiftTimezone($tz);
+        $horas = $ahora->diffInHours($inicio, false);
+
+        if ($horas >= 0 && $horas < self::HORAS_AVISO_CORTO + 1) {
+            // Se redondea hacia arriba: entre 60 y 120 minutos, "en 2 horas".
+            $restantes = (int) ceil(max($ahora->diffInMinutes($inicio, false), 0) / 60);
+
+            return match (true) {
+                $restantes <= 0 => 'en unos minutos',
+                $restantes === 1 => 'en 1 hora',
+                default => "en {$restantes} horas",
+            };
+        }
+
         // Carbon 3 devuelve float: se redondea a días de calendario completos.
         $dias = (int) round($ahora->copy()->startOfDay()->diffInDays($inicio->copy()->startOfDay(), false));
 

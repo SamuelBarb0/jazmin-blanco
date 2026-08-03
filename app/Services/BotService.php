@@ -1379,7 +1379,7 @@ class BotService
         - Cuando el paciente confirme un día y una hora, NO agendes todavía: primero debe PAGAR la valoración (ver la regla obligatoria abajo). No afirmes que quedó agendada hasta que la herramienta agendar_cita lo confirme.
         - SIEMPRE incluye en el parámetro "servicio" el tratamiento que mencionó el paciente (por ejemplo "botox", "limpieza facial", "ácido hialurónico"), aunque use un nombre comercial; el sistema lo asocia con el servicio del catálogo. Sin esto, la cita queda sin tratamiento.
         - Después de agendar, confírmale con calidez el día y la hora, y recuérdale la dirección de la clínica.
-        - Al confirmar la cita, avísale que le enviaremos un recordatorio por este mismo chat un par de días antes y el día anterior, y que si prefiere no recibirlos solo tiene que decírtelo. Este aviso es obligatorio: es el permiso del paciente para escribirle después.
+        - Al confirmar la cita, avísale que le enviaremos un recordatorio por este mismo chat un día antes y otro un par de horas antes, y que si prefiere no recibirlos solo tiene que decírtelo. Este aviso es obligatorio: es el permiso del paciente para escribirle después.
         - Si el horario que pide ya está ocupado, discúlpate y ofrécele las opciones libres más cercanas.
 
         # Pago de la valoración OBLIGATORIO antes de agendar (regla estricta)
