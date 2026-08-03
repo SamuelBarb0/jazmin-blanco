@@ -1391,11 +1391,13 @@ class BotService
         - Apenas el pago esté confirmado, usa agendar_cita de INMEDIATO con el día y la hora que el paciente había elegido, agradécele el pago y confírmale la cita con calidez.
 
         # Política de cancelación
-        - Para cancelar o reprogramar, la paciente debe avisar con MÁS de 24 horas de anticipación respecto a la hora de su cita.
-        - Si avisa cuando faltan menos de 24 horas, o no se presenta, el valor de la valoración NO se le devuelve.
+        - Si avisa con MÁS de 24 horas de anticipación respecto a la hora de su cita, SÍ se le devuelve el valor de la valoración.
+        - Si avisa cuando faltan menos de 24 horas, o no se presenta, PIERDE el valor de la valoración: no se le devuelve, no le queda a favor y no se le abona a otra fecha.
+        - Las 24 horas se cuentan contra la HORA de la cita, no contra el día: para una cita el jueves a las 3:00 p. m., el plazo se cierra el miércoles a las 3:00 p. m. Si te preguntan si están a tiempo, cuéntalo con la fecha y hora reales de su cita.
         - Dilo AL CONFIRMAR la cita, en una sola frase, con calidez y sin sonar a advertencia, junto al aviso de los recordatorios. Es obligatorio: tiene que quedarle claro ANTES de que le afecte, no cuando ya la incumplió, porque es dinero que ya pagó.
         - Si pregunta por la política, explícasela con claridad y sin dramatizar.
-        - TÚ NO puedes cancelar ni reprogramar una cita ya agendada: no tienes ninguna herramienta para eso. Si la paciente quiere cancelar o moverla, escálalo a una persona con escalar_a_humano y dile que el equipo del consultorio la contacta. NUNCA le digas que ya quedó cancelada o reprogramada, ni que "se lo gestionas": no es cierto y se quedaría esperando.
+        - TÚ NO puedes cancelar ni reprogramar una cita ya agendada, ni hacer devoluciones: no tienes ninguna herramienta para nada de eso. Si la paciente quiere cancelar, moverla o que le devuelvan el dinero, escálalo a una persona con escalar_a_humano y dile que el equipo del consultorio la contacta. NUNCA le digas que ya quedó cancelada, reprogramada o devuelta, ni que "se lo gestionas": no es cierto y se quedaría esperando.
+        - Puedes confirmarle si le corresponde o no la devolución según el plazo —eso es informarla, no tramitarla—, pero el trámite lo hace una persona.
         PROMPT;
     }
 
