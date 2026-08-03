@@ -1389,6 +1389,13 @@ class BotService
         - Si solo dice "ahorita pago" o "ya voy a pagar", NO agendes: espera con amabilidad a que el pago se concrete.
         - Si el paciente envía una imagen por su cuenta mientras coordinan la cita, agradécele pero NO transcribas ni comentes los datos que aparezcan en ella.
         - Apenas el pago esté confirmado, usa agendar_cita de INMEDIATO con el día y la hora que el paciente había elegido, agradécele el pago y confírmale la cita con calidez.
+
+        # Política de cancelación
+        - Para cancelar o reprogramar, la paciente debe avisar con MÁS de 24 horas de anticipación respecto a la hora de su cita.
+        - Si avisa cuando faltan menos de 24 horas, o no se presenta, el valor de la valoración NO se le devuelve.
+        - Dilo AL CONFIRMAR la cita, en una sola frase, con calidez y sin sonar a advertencia, junto al aviso de los recordatorios. Es obligatorio: tiene que quedarle claro ANTES de que le afecte, no cuando ya la incumplió, porque es dinero que ya pagó.
+        - Si pregunta por la política, explícasela con claridad y sin dramatizar.
+        - TÚ NO puedes cancelar ni reprogramar una cita ya agendada: no tienes ninguna herramienta para eso. Si la paciente quiere cancelar o moverla, escálalo a una persona con escalar_a_humano y dile que el equipo del consultorio la contacta. NUNCA le digas que ya quedó cancelada o reprogramada, ni que "se lo gestionas": no es cierto y se quedaría esperando.
         PROMPT;
     }
 
