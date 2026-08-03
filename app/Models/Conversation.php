@@ -11,6 +11,24 @@ class Conversation extends Model
 {
     protected $fillable = ['user_id', 'lead_id', 'campaign_id', 'title', 'channel', 'referral', 'bot_enabled', 'bot_paused_at', 'escalated_at', 'escalation_reason'];
 
+    /**
+     * El valor por defecto tiene que estar TAMBIÉN aquí, no solo en la columna.
+     *
+     * La migración declara `bot_enabled` con `default(true)`, pero ese default
+     * lo aplica la BASE al insertar: el modelo recién creado con `create()` o
+     * `firstOrCreate()` NO lo conoce y devuelve `null` hasta que se relee. Como
+     * `ProcessWhatsAppMessage` comprueba `if (! $conversation->bot_enabled)`
+     * justo después de crearla, `! null` daba `true` y el job se salía sin
+     * responder — SIN error, porque esa guarda es un `return` mudo.
+     *
+     * El efecto era que el PRIMER mensaje de cada paciente nueva se descartaba
+     * y solo se le contestaba a partir del segundo, que es cuando
+     * `firstOrCreate` ya encuentra la fila y la lee de la base con el `true`
+     * puesto. Justo el peor mensaje que se puede perder: el primer contacto de
+     * alguien que acaba de hacer clic en un anuncio.
+     */
+    protected $attributes = ['bot_enabled' => true];
+
     protected function casts(): array
     {
         return [
