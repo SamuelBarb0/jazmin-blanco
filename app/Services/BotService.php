@@ -231,6 +231,12 @@ class BotService
     /**
      * ¿El último mensaje del paciente pide ver la media de nuevo? En ese caso permitimos
      * reenviarla (se salta el filtro de "una vez por conversación").
+     *
+     * SIEMPRE hay que nombrar foto/video/imagen. Antes «otra vez», «de nuevo»,
+     * «nuevamente» y «repite» eran alternativas SUELTAS, así que cualquier
+     * petición de repetir algo disparaba el reenvío: «podrías enviarme los
+     * horarios de nuevo» le mandaba a la paciente 3 videos y 2 fotos del
+     * implante capilar. Pasó en producción el 2026-08-03.
      */
     private function wantsMediaResend(Conversation $conversation): bool
     {
@@ -243,11 +249,18 @@ class BotService
             return false;
         }
 
-        return (bool) preg_match(
-            '/\b(otra vez|de nuevo|nuevamente|rep[ií]t\w*|vuelv\w+ a (enviar|mandar|mostrar|pasar)|'
-            .'(m[aá]nd\w*|env[ií]\w*|mu[eé]str\w*|pas\w*|comp[aá]rt\w*)[^.?!]*\b(foto|fotos|video|videos|imagen|im[aá]genes)\b)/iu',
-            (string) $last,
-        );
+        $last = (string) $last;
+
+        // Pedir repetir, en cualquiera de sus formas.
+        $repetir = '/\b(otra vez|de nuevo|nuevamente|rep[ií]t\w*|'
+            .'vuelv\w+ a (enviar|mandar|mostrar|pasar)|'
+            .'m[aá]nd\w*|env[ií]\w*|mu[eé]str\w*|pas\w*|comp[aá]rt\w*)/iu';
+
+        // …referido a material visual, que es lo que faltaba exigir.
+        $visual = '/\b(foto|fotos|video|v[ií]deo|videos|v[ií]deos|imagen|im[aá]genes|'
+            .'material|antes y despu[eé]s|resultados?)\b/iu';
+
+        return (bool) preg_match($repetir, $last) && (bool) preg_match($visual, $last);
     }
 
     /**
@@ -1362,6 +1375,7 @@ class BotService
         - Para sugerir horarios, usa consultar_disponibilidad (devuelve los huecos LIBRES reales con fecha y hora exactas). Ofrécele al paciente esas fechas y horas concretas (por ejemplo "tengo disponible el martes 24 a las 9:00 a. m., 10:30 a. m. o 3:00 p. m."), NUNCA términos vagos como "mañana" o "más tarde".
         - Si el paciente no dio un día fijo, consulta varios días a la vez (parámetro "dias") y ofrécele las primeras opciones de los próximos días.
         - No ofrezcas un horario que no aparezca en la lista de disponibles, y respeta siempre el horario de atención.
+        - VUELVE A LLAMAR a consultar_disponibilidad cada vez que menciones horarios, aunque ya los hayas consultado en esta misma conversación y aunque la paciente solo pida que se los repitas. NUNCA los copies de un mensaje anterior tuyo: la agenda cambia a cada momento y una hora que estaba libre hace un rato puede estar ocupada ahora. Repetir la lista vieja hace que le cobremos a la paciente por una hora que ya no existe.
         - Cuando el paciente confirme un día y una hora, NO agendes todavía: primero debe PAGAR la valoración (ver la regla obligatoria abajo). No afirmes que quedó agendada hasta que la herramienta agendar_cita lo confirme.
         - SIEMPRE incluye en el parámetro "servicio" el tratamiento que mencionó el paciente (por ejemplo "botox", "limpieza facial", "ácido hialurónico"), aunque use un nombre comercial; el sistema lo asocia con el servicio del catálogo. Sin esto, la cita queda sin tratamiento.
         - Después de agendar, confírmale con calidez el día y la hora, y recuérdale la dirección de la clínica.
