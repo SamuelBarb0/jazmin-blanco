@@ -255,7 +255,19 @@ class GoogleCalendarService
             ? "{$serviceName} — {$appointment->patient_name}"
             : "Cita — {$appointment->patient_name}";
 
+        // La marca va DELANTE y en mayúsculas porque en la vista de mes de
+        // Google el título se corta: al final no se vería, y el sentido de esta
+        // marca es que salte a la vista sin abrir el evento.
+        if ($appointment->transfer_pending_at) {
+            $summary = '⚠️ VERIFICAR TRANSFERENCIA — '.$summary;
+        }
+
         $descriptionLines = array_filter([
+            $appointment->transfer_pending_at
+                ? 'PAGO POR TRANSFERENCIA SIN VERIFICAR: la paciente eligió pagar por transferencia o Nequi, así que el cupo quedó apartado sin comprobante. '
+                    .'Confirma en el banco que el dinero llegó antes de atenderla. Declarada el '
+                    .$appointment->transfer_pending_at->format('d/m/Y H:i').'.'
+                : null,
             $serviceName ? "Servicio: {$serviceName}" : null,
             $appointment->patient_phone ? "Teléfono: {$appointment->patient_phone}" : null,
             $appointment->patient_email ? "Correo: {$appointment->patient_email}" : null,

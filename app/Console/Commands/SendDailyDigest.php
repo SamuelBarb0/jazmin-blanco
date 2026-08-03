@@ -219,6 +219,26 @@ class SendDailyDigest extends Command
             $alertas[] = "{$pagadosSinCita} pago(s) confirmados SIN cita agendada";
         }
 
+        // 4b. Transferencias sin verificar de citas que ya vienen.
+        //
+        // Estas citas se apartaron SIN comprobar el pago, así que la única
+        // defensa contra un cupo regalado es que la doctora las vea. Se listan
+        // solo las FUTURAS: una pasada ya no se puede verificar a tiempo, y
+        // repetirla cada mañana convertiría el aviso en ruido que se ignora.
+        $porVerificar = Appointment::where('user_id', $user->id)
+            ->whereNotNull('transfer_pending_at')
+            ->where('starts_at', '>=', now())
+            ->orderBy('starts_at')
+            ->get();
+        if ($porVerificar->isNotEmpty()) {
+            $detalle = $porVerificar
+                ->take(5)
+                ->map(fn (Appointment $a) => $a->patient_name.' · '.$a->starts_at->format('d/m H:i'))
+                ->implode('; ');
+            $alertas[] = $porVerificar->count().' transferencia(s) SIN verificar en citas próximas: '.$detalle
+                .($porVerificar->count() > 5 ? ' …' : '');
+        }
+
         // 5. Citas que no llegaron a Google Calendar.
         $sinSync = Appointment::where('user_id', $user->id)
             ->where('created_at', '>=', $desde)

@@ -27,6 +27,7 @@ class Appointment extends Model
         'source_event_id',
         'reminder_2h_sent_at',
         'reminder_24h_sent_at',
+        'transfer_pending_at',
     ];
 
     protected function casts(): array
@@ -37,6 +38,7 @@ class Appointment extends Model
             'google_synced_at' => 'datetime',
             'reminder_2h_sent_at' => 'datetime',
             'reminder_24h_sent_at' => 'datetime',
+            'transfer_pending_at' => 'datetime',
         ];
     }
 

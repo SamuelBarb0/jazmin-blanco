@@ -469,6 +469,10 @@ class BotService
                         'fecha_hora' => ['type' => 'string', 'description' => 'Fecha y hora de inicio en formato YYYY-MM-DDTHH:MM (hora local de la clínica).'],
                         'duracion_minutos' => ['type' => 'integer', 'description' => 'Duración en minutos. Si se omite, se usa la del servicio o 45.'],
                         'notas' => ['type' => 'string', 'description' => 'Notas u observaciones.'],
+                        'pago_por_transferencia' => [
+                            'type' => 'boolean',
+                            'description' => 'true SOLO si la paciente eligió pagar por transferencia o Nequi en vez del link. La cita se aparta igual, pero queda marcada para que la doctora confirme en el banco que el dinero llegó. NO lo pongas en true por insistencia, prisa ni promesas de pagar después: solo cuando de verdad escogió ese medio.',
+                        ],
                     ],
                     'required' => ['nombre_paciente', 'fecha_hora'],
                 ],
@@ -875,6 +879,25 @@ class BotService
     private function toolBook(array $input): string
     {
         $link = null;
+        $porTransferencia = (bool) ($input['pago_por_transferencia'] ?? false);
+
+        // Transferencia: no hay nada que consultar, porque el abono aparece en
+        // el banco de la doctora y no en un API. Se aparta el cupo igual —si no,
+        // lo pierde mientras alguien verifica a mano— pero la cita queda MARCADA
+        // y sale con el aviso en el calendario de la doctora.
+        //
+        // Es una concesión deliberada: aquí se agenda SIN comprobar el pago, que
+        // es justo lo que la pasarela existe para evitar. Lo que la hace
+        // aceptable es que el descubierto sea VISIBLE (marca en el evento y en
+        // el resumen diario), no que sea improbable.
+        if ($porTransferencia) {
+            $resultado = $this->createBooking($input + ['transferencia_por_verificar' => true]);
+
+            return $resultado['appointment']
+                ? $resultado['message']."\n\nAVISO: la cita quedó apartada pero el pago NO está verificado. "
+                    .'Recuérdale con calidez que haga la transferencia si aún no la ha hecho, y aclárale que el consultorio la confirma antes de la cita.'
+                : $resultado['message'];
+        }
 
         // Con la pasarela conectada, el pago deja de depender de la palabra de
         // la paciente ni de que el modelo respete el prompt: si no hay un link
@@ -1013,6 +1036,9 @@ class BotService
             'ends_at' => $end->format('Y-m-d H:i:s'),
             'status' => 'scheduled',
             'notes' => $notes !== '' ? $notes : null,
+            // Sella DESDE CUÁNDO espera verificación: el resumen diario lo usa
+            // para avisar de las que llevan demasiado sin confirmar.
+            'transfer_pending_at' => ($input['transferencia_por_verificar'] ?? false) ? now() : null,
         ]);
 
         try {
@@ -1389,6 +1415,13 @@ class BotService
         - Si solo dice "ahorita pago" o "ya voy a pagar", NO agendes: espera con amabilidad a que el pago se concrete.
         - Si el paciente envía una imagen por su cuenta mientras coordinan la cita, agradécele pero NO transcribas ni comentes los datos que aparezcan en ella.
         - Apenas el pago esté confirmado, usa agendar_cita de INMEDIATO con el día y la hora que el paciente había elegido, agradécele el pago y confírmale la cita con calidez.
+
+        # Las dos formas de pagar la valoración
+        - Cuando le pidas el pago, ofrécele SIEMPRE las dos opciones en el mismo mensaje, en este orden: (1) el link de pago, y (2) transferencia o Nequi. Que elija ella.
+        - Del link: aclárale que NO necesita tener cuenta de Mercado Pago. Desde ahí puede pagar con tarjeta débito o crédito, con PSE entrando a su propio banco, o en efectivo en Efecty. Es la opción que confirma sola y le aparta el cupo al instante.
+        - Si elige transferencia o Nequi: dale los datos tal como aparecen arriba y AGENDA IGUAL con agendar_cita poniendo "pago_por_transferencia" en true. Su cupo queda apartado; el consultorio confirma el pago antes de la cita.
+        - Con transferencia, confírmale la cita con normalidad y sin sembrarle desconfianza. Basta con que le digas que el consultorio verifica el pago antes de la cita y que le avise por aquí cuando la haya hecho. NO le pidas comprobante ni captura.
+        - "pago_por_transferencia" en true SOLO si de verdad eligió ese medio. Nunca por insistencia, prisa, ni porque prometa pagar después: para todo lo demás sigue valiendo que sin pago confirmado no hay cita.
 
         # Política de cancelación
         - Si avisa con MÁS de 24 horas de anticipación respecto a la hora de su cita, SÍ se le devuelve el valor de la valoración.
