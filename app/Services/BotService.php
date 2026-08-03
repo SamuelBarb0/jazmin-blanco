@@ -98,7 +98,7 @@ class BotService
             $blocks = $response['content'] ?? [];
 
             if (($response['stop_reason'] ?? null) === 'tool_use') {
-                $messages[] = ['role' => 'assistant', 'content' => $blocks];
+                $messages[] = ['role' => 'assistant', 'content' => self::inputsComoObjeto($blocks)];
 
                 $results = [];
                 foreach ($blocks as $block) {
@@ -122,6 +122,34 @@ class BotService
         }
 
         return $this->respond('Disculpa, tuve un inconveniente al procesar tu solicitud. ¿Lo intentamos de nuevo?', $campaign, $alreadySent, $wantsResend, $conversation);
+    }
+
+    /**
+     * Devuelve los bloques igual que llegaron, salvo el `input` de los
+     * `tool_use` vacíos, que se fuerza a objeto antes de reenviarlos.
+     *
+     * Cuando la herramienta no lleva argumentos —`verificar_pago` es la única—
+     * la API responde `"input": {}`, `json_decode` en modo array lo deja en
+     * `[]`, y al reenviar el historial ese `[]` se serializa como LISTA. La API
+     * rechaza entonces la llamada entera con «tool_use.input: Input should be
+     * an object», el job muere y la paciente se queda sin respuesta: es un fallo
+     * mudo, y encima en el peor momento, porque la frase que dispara esa
+     * herramienta es «ya pagué».
+     *
+     * Es el mismo tropiezo que ya se corrigió en el ESQUEMA que se envía
+     * (`properties => new stdClass()`), pero en el camino de vuelta, que nadie
+     * miró entonces. Solo se tocan los vacíos: un input con datos ya se
+     * serializa como objeto por tener claves de texto.
+     */
+    private static function inputsComoObjeto(array $blocks): array
+    {
+        return array_map(function ($block) {
+            if (($block['type'] ?? '') === 'tool_use' && ($block['input'] ?? null) === []) {
+                $block['input'] = new \stdClass();
+            }
+
+            return $block;
+        }, $blocks);
     }
 
     /**
