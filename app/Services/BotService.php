@@ -1167,8 +1167,9 @@ class BotService
         // Ojo: el heredoc desindenta el literal, no lo interpolado. Estas líneas
         // van sin sangría para que el prompt quede alineado.
         $prioridadPagoLines = $pagoEnLinea
-            ? "- Para pagar la valoración ofrece SIEMPRE primero el link de pago en línea: es el medio preferido y el más seguro."
-                ."\n- Comparte los datos de transferencia, consignación o Nequi SOLO si el paciente los pide expresamente o te dice que no puede usar el link. No los ofrezcas de entrada ni los repitas si ya los enviaste en esta conversación."
+            ? "- Para pagar la valoración ofrécele las DOS opciones y deja que elija: el link de pago en línea (el más cómodo, porque confirma solo) o transferencia/Nequi."
+                ."\n- En cuanto elija transferencia o Nequi, escríbele los datos COMPLETOS de una vez. No esperes a que te los pida por segunda vez ni le digas «recuerda hacer la transferencia» sin ponerle a dónde: eso la deja atascada."
+                ."\n- No repitas los datos si ya se los enviaste en esta misma conversación y no te los ha vuelto a pedir."
                 ."\n- El link de pago NO es una forma de pago genérica: es EXCLUSIVAMENTE para pagar la valoración. Nunca lo ofrezcas para pagar tratamientos u otros servicios."
             : "- Para pagar la valoración comparte los datos de transferencia, consignación o Nequi que aparecen arriba, y pídele que te AVISE por este chat cuando lo haya hecho."
                 ."\n- NO hay link de pago en línea disponible: no lo menciones, no lo prometas y NUNCA inventes uno.";
