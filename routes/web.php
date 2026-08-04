@@ -11,11 +11,14 @@ use App\Http\Controllers\LegalController;
 use App\Http\Controllers\PipelineController;
 use App\Http\Controllers\ServiceController;
 use App\Http\Controllers\ServiceMediaController;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
-use Inertia\Inertia;
 
+// La raíz no muestra landing: este dominio es la herramienta interna del
+// consultorio, no una web pública. Si ya hay sesión va al panel, y si no al
+// login — así entrar por la URL pelada no obliga a un clic de más.
 Route::get('/', function () {
-    return Inertia::render('welcome');
+    return redirect()->route(Auth::check() ? 'dashboard' : 'login');
 })->name('home');
 
 // Páginas legales públicas. Meta las exige para publicar la app de WhatsApp.
