@@ -74,7 +74,20 @@ const hace = (iso: string | null): string => {
 const hora = (iso: string | null): string =>
     iso ? new Date(iso).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }) : '';
 
-export default function Inbox({ conversations, selected }: { conversations: ConversationRow[]; selected: Selected | null }) {
+export default function Inbox({
+    conversations,
+    selected,
+    auto_selected: autoSelected = false,
+}: {
+    conversations: ConversationRow[];
+    selected: Selected | null;
+    auto_selected?: boolean;
+}) {
+    // El chat que abre solo el escritorio para no dejar el panel vacío NO debe
+    // adueñarse de la pantalla en celular: ahí se entra por la lista. Se resuelve
+    // por CSS y no con `useIsMobile()` a propósito — ese hook devuelve `undefined`
+    // en el primer render y el chat asomaría un instante antes de esconderse.
+    const listaEnMovil = !selected || autoSelected;
     const { flash } = usePage<SharedData>().props;
     const scrollRef = useRef<HTMLDivElement>(null);
     const archivoRef = useRef<HTMLInputElement>(null);
@@ -174,12 +187,17 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                 grande se mantienen lado a lado. `dvh` en vez de `vh` porque en
                 el navegador del móvil la barra de direcciones se esconde y con
                 `vh` el compositor queda fuera de la pantalla. */}
-            <div className="flex h-[calc(100dvh-9rem)] gap-4 p-2 md:p-4">
+            {/* `flex-1 min-h-0` en vez de restarle una altura fija al viewport:
+                el `calc(100dvh-9rem)` dejaba 80px muertos abajo porque 9rem no
+                era la altura real de la cabecera. Así ocupa exactamente lo que
+                sobra, y `min-h-0` es lo que permite que el chat haga scroll
+                dentro en vez de estirar la página. */}
+            <div className="flex min-h-0 flex-1 gap-4 p-2 md:p-4">
                 {/* ── Lista de chats ─────────────────────────────── */}
                 <aside
                     className={cn(
                         'glass w-full shrink-0 flex-col overflow-hidden rounded-xl md:flex md:w-80',
-                        selected ? 'hidden' : 'flex',
+                        listaEnMovil ? 'flex' : 'hidden',
                     )}
                 >
                     <header className="border-b border-border/60 px-4 py-3">
@@ -241,7 +259,7 @@ export default function Inbox({ conversations, selected }: { conversations: Conv
                 <section
                     className={cn(
                         'glass flex-1 flex-col overflow-hidden rounded-xl md:flex',
-                        selected ? 'flex' : 'hidden',
+                        selected && !listaEnMovil ? 'flex' : 'hidden',
                     )}
                 >
                     {!selected && (

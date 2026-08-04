@@ -88,6 +88,11 @@ class InboxController extends Controller
         return Inertia::render('inbox/index', [
             'conversations' => $conversations,
             'selected' => $selected ? $this->serialize($selected) : null,
+            // El servidor no sabe el tamaño de la pantalla, así que en vez de
+            // decidir por el viewport le dice al front CÓMO se eligió el chat:
+            // si lo abrió el usuario o si es el relleno de escritorio. En
+            // celular ese relleno se oculta por CSS y se ve la lista.
+            'auto_selected' => $selected !== null && ! $conversation?->exists,
         ]);
     }
 
