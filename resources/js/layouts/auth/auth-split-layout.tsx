@@ -22,8 +22,8 @@ export default function AuthSplitLayout({ children, title, description }: AuthLa
                 <div className="grain absolute inset-0" />
 
                 <Link href={route('home')} className="relative z-10 flex items-center gap-2 text-white">
-                    <div className="bg-sidebar-primary text-sidebar-primary-foreground flex size-9 items-center justify-center rounded-lg">
-                        <AppLogoIcon className="size-5 fill-current" />
+                    <div className="flex size-9 items-center justify-center rounded-lg bg-white ring-1 ring-white/20">
+                        <AppLogoIcon className="size-8" />
                     </div>
                     <span className="font-medium">Dra. Jasmin Blanco</span>
                 </Link>
@@ -48,11 +48,10 @@ export default function AuthSplitLayout({ children, title, description }: AuthLa
             {/* Formulario */}
             <div className="flex items-center justify-center p-6 sm:p-10">
                 <div className="w-full max-w-sm">
-                    <Link href={route('home')} className="mb-8 flex items-center justify-center gap-2 lg:hidden">
-                        <div className="bg-primary text-primary-foreground flex size-9 items-center justify-center rounded-lg">
-                            <AppLogoIcon className="size-5 fill-current" />
-                        </div>
-                        <span className="font-medium">Dra. Jasmin Blanco</span>
+                    {/* En móvil no hay panel de marca, así que aquí va el logo
+                        completo con el nombre — el fondo es claro y se lee. */}
+                    <Link href={route('home')} className="mb-8 flex items-center justify-center lg:hidden">
+                        <img src="/logo-aurum.png" alt="Aurum Clinic System" className="h-24 w-auto rounded-lg dark:bg-white dark:p-2" />
                     </Link>
 
                     <div className="mb-6 flex flex-col gap-1.5">

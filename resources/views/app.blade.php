@@ -6,6 +6,10 @@
 
         <title inertia>{{ config('app.name', 'Laravel') }}</title>
 
+        {{-- El ?v evita que el navegador siga mostrando el favicon anterior en caché --}}
+        <link rel="icon" href="/favicon.ico?v=aurum" sizes="any">
+        <link rel="apple-touch-icon" href="/logo-aurum-mark-192.png">
+
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=instrument-sans:400,500,600,700|instrument-serif:400,400i" rel="stylesheet" />
 
