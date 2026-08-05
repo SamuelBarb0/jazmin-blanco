@@ -561,6 +561,47 @@ class Settings
     }
 
     /**
+     * Descanso diario (almuerzo), con el mismo formato que `scheduleHours()`:
+     * día de la semana => ['HH:MM' inicio, 'HH:MM' fin] o null si ese día no hay.
+     *
+     * Existe porque el horario de atención es UNA franja continua, así que sin
+     * esto la hora del almuerzo se ofrecía como cualquier otra.
+     *
+     * @return array<int,array{0:string,1:string}|null>
+     */
+    public static function scheduleBreaks(): array
+    {
+        $stored = self::get('schedule_breaks');
+        if (filled($stored)) {
+            $decoded = json_decode($stored, true);
+            if (is_array($decoded)) {
+                $out = [];
+                foreach ($decoded as $day => $window) {
+                    $out[(int) $day] = is_array($window) && count($window) === 2 ? [$window[0], $window[1]] : null;
+                }
+
+                return $out;
+            }
+        }
+
+        // Default: almuerzo de la doctora, 12:00–13:00, TODOS los días que abre.
+        // Ojo con el sábado: como cierra a las 13:00, el descanso se come su
+        // última hora y en la práctica la jornada termina a las 12:00. Es
+        // deliberado —la doctora almuerza igual— y por eso se modela como
+        // descanso y no adelantando el cierre: si algún día amplía el horario
+        // del sábado, la hora del almuerzo sigue protegida sola.
+        return [
+            0 => null,
+            1 => ['12:00', '13:00'],
+            2 => ['12:00', '13:00'],
+            3 => ['12:00', '13:00'],
+            4 => ['12:00', '13:00'],
+            5 => ['12:00', '13:00'],
+            6 => ['12:00', '13:00'],
+        ];
+    }
+
+    /**
      * Granularidad de los turnos en minutos (cada cuánto se ofrece un horario).
      */
     public static function scheduleSlotMinutes(): int

@@ -741,6 +741,14 @@ class BotService
             $open = $day->copy()->setTimeFromTimeString($window[0]);
             $close = $day->copy()->setTimeFromTimeString($window[1]);
 
+            // El descanso se trata como tiempo ocupado: no es un evento de
+            // Google, pero para la agenda significa exactamente lo mismo. Así
+            // reutiliza la comprobación de solape de abajo en vez de duplicarla.
+            $ocupado = $busy;
+            if ($descanso = $this->ventanaDelDia(Settings::scheduleBreaks(), $day)) {
+                $ocupado[] = ['start' => $descanso[0], 'end' => $descanso[1]];
+            }
+
             $slots = [];
             // Se AVANZA de $slotMin en $slotMin (cada cuánto puede empezar una
             // cita) pero se COMPRUEBA $duracion (cuánto ocupa), y el hueco solo
@@ -754,7 +762,7 @@ class BotService
                 }
 
                 $occupied = false;
-                foreach ($busy as $b) {
+                foreach ($ocupado as $b) {
                     if ($slotStart->lt($b['end']) && $slotEnd->gt($b['start'])) {
                         $occupied = true;
                         break;
@@ -789,6 +797,65 @@ class BotService
 
         return "Horarios DISPONIBLES (zona horaria {$tz}). Ofrécele al paciente estas fechas y horas EXACTAS, nunca términos vagos:\n"
             .implode("\n", $lines);
+    }
+
+    /**
+     * Traduce una tabla `día de la semana => ['HH:MM','HH:MM']` a un par de
+     * Carbon situado en el día concreto, o null si ese día no tiene ventana.
+     *
+     * @param  array<int,array{0:string,1:string}|null>  $tabla
+     * @return array{0:Carbon,1:Carbon}|null
+     */
+    private function ventanaDelDia(array $tabla, Carbon $day): ?array
+    {
+        $w = $tabla[$day->dayOfWeek] ?? null;
+
+        if (! is_array($w) || count($w) !== 2) {
+            return null;
+        }
+
+        return [
+            $day->copy()->setTimeFromTimeString($w[0]),
+            $day->copy()->setTimeFromTimeString($w[1]),
+        ];
+    }
+
+    /**
+     * Motivo por el que una cita NO cabe en la agenda, o null si sí cabe.
+     *
+     * Se comprueba aquí además de al ofrecer horarios porque la paciente puede
+     * pedir una hora que nunca se le ofreció —«¿y a las 12:30?»— y hasta ahora
+     * `createBooking` solo miraba Google y los apartados: la agendaba igual,
+     * en pleno almuerzo o incluso de madrugada.
+     */
+    private function motivoFueraDeHorario(Carbon $start, Carbon $end): ?string
+    {
+        $hora = $start->format('h:i a');
+        $dia = $start->copy()->startOfDay();
+
+        $atencion = $this->ventanaDelDia(Settings::scheduleHours(), $dia);
+        if (! $atencion) {
+            $nombre = $start->locale('es')->isoFormat('dddd');
+
+            return "ERROR: el consultorio no atiende los {$nombre}. No agendes ahí; ofrécele un día en que sí se atienda.";
+        }
+
+        // El fin se compara contra el cierre: lo que importa es que quepa el
+        // procedimiento entero, no solo que empiece dentro de la jornada.
+        if ($start->lt($atencion[0]) || $end->gt($atencion[1])) {
+            return "ERROR: las {$hora} quedan fuera del horario de atención de ese día ("
+                .$atencion[0]->format('h:i a').' a '.$atencion[1]->format('h:i a')
+                .'), contando lo que dura el procedimiento. No agendes ahí; ofrécele un horario dentro de la jornada.';
+        }
+
+        $descanso = $this->ventanaDelDia(Settings::scheduleBreaks(), $dia);
+        if ($descanso && $start->lt($descanso[1]) && $end->gt($descanso[0])) {
+            return "ERROR: las {$hora} caen en el descanso de la doctora ("
+                .$descanso[0]->format('h:i a').' a '.$descanso[1]->format('h:i a')
+                .'). No agendes ahí; ofrécele un horario antes o después del descanso.';
+        }
+
+        return null;
     }
 
     /**
@@ -1018,6 +1085,13 @@ class BotService
 
         $duration = (int) ($input['duracion_minutos'] ?? $service?->duration_minutes ?: self::DURACION_POR_DEFECTO);
         $end = $start->copy()->addMinutes($duration);
+
+        // Primero la agenda de la doctora: día cerrado, fuera de jornada o en
+        // pleno descanso. Va ANTES de consultar Google porque no hace falta
+        // preguntar por huecos en una hora en la que no se atiende.
+        if ($fueraDeHorario = $this->motivoFueraDeHorario($start, $end)) {
+            return ['message' => $fueraDeHorario, 'appointment' => null];
+        }
 
         // Re-verifica que no se solape con algo ya ocupado.
         $busy = GoogleCalendarService::fromConfig()->busyTimes(

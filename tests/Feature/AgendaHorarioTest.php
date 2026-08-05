@@ -1,0 +1,122 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\User;
+use App\Services\BotService;
+use App\Support\Settings;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use ReflectionMethod;
+use Tests\TestCase;
+
+/**
+ * El almuerzo de la doctora es tiempo suyo, no un hueco.
+ *
+ * Lore ofrecía las 12:00 como cualquier otra hora porque el horario de
+ * atención era UNA franja continua (8:00–18:00) sin concepto de descanso. Y
+ * peor: `createBooking()` no comprobaba el horario en absoluto —solo Google y
+ * los apartados—, así que una paciente que pidiera las 12:30 se agendaba
+ * igual aunque nunca se le hubiera ofrecido esa hora.
+ */
+class AgendaHorarioTest extends TestCase
+{
+    use RefreshDatabase;
+
+    /** Un miércoles cualquiera, para no depender del día en que corra el test. */
+    private const MIERCOLES = '2026-08-12';
+
+    private const SABADO = '2026-08-15';
+
+    private const DOMINGO = '2026-08-16';
+
+    public function test_el_descanso_por_defecto_es_el_almuerzo_de_todos_los_dias_que_abre(): void
+    {
+        $descansos = Settings::scheduleBreaks();
+
+        foreach ([1, 2, 3, 4, 5, 6] as $diaQueAbre) {
+            $this->assertSame(['12:00', '13:00'], $descansos[$diaQueAbre]);
+        }
+
+        // Domingo cerrado: no hay jornada de la que descansar.
+        $this->assertNull($descansos[0]);
+    }
+
+    public function test_no_se_puede_agendar_dentro_del_almuerzo(): void
+    {
+        // Empieza justo al abrir el descanso.
+        $this->assertRechazado(self::MIERCOLES.' 12:00', 30, 'descanso');
+        // Empieza en mitad del descanso.
+        $this->assertRechazado(self::MIERCOLES.' 12:30', 30, 'descanso');
+        // Empieza ANTES pero se mete dentro: 11:45 + 45 min = 12:30.
+        $this->assertRechazado(self::MIERCOLES.' 11:45', 45, 'descanso');
+    }
+
+    public function test_los_bordes_del_almuerzo_siguen_siendo_agendables(): void
+    {
+        // Termina justo cuando empieza el descanso.
+        $this->assertAceptado(self::MIERCOLES.' 11:30', 30);
+        // Empieza justo cuando termina.
+        $this->assertAceptado(self::MIERCOLES.' 13:00', 30);
+    }
+
+    public function test_no_se_puede_agendar_fuera_de_la_jornada(): void
+    {
+        $this->assertRechazado(self::MIERCOLES.' 07:00', 30, 'fuera del horario');
+        $this->assertRechazado(self::MIERCOLES.' 21:00', 30, 'fuera del horario');
+        // Cabe el comienzo pero no el procedimiento entero: 17:45 + 45 = 18:30.
+        $this->assertRechazado(self::MIERCOLES.' 17:45', 45, 'fuera del horario');
+    }
+
+    public function test_no_se_puede_agendar_un_dia_cerrado(): void
+    {
+        $this->assertRechazado(self::DOMINGO.' 10:00', 30, 'no atiende');
+    }
+
+    public function test_el_sabado_tambien_almuerza_y_eso_lo_deja_en_media_manana(): void
+    {
+        // El sábado abre 9:00–13:00 y el almuerzo ocupa 12:00–13:00, así que en
+        // la práctica la jornada termina a las 12:00. Se comprueba entero para
+        // que nadie «arregle» el solape sin darse cuenta de esta consecuencia.
+        $this->assertAceptado(self::SABADO.' 11:30', 30);
+        $this->assertRechazado(self::SABADO.' 12:00', 30, 'descanso');
+        $this->assertRechazado(self::SABADO.' 12:30', 30, 'descanso');
+        // Y más allá de las 13:00 ya no cabe ni aunque no hubiera descanso.
+        $this->assertRechazado(self::SABADO.' 12:45', 30, 'fuera del horario');
+    }
+
+    private function assertRechazado(string $inicio, int $minutos, string $contiene): void
+    {
+        $motivo = $this->motivo($inicio, $minutos);
+
+        $this->assertNotNull($motivo, "Se esperaba rechazar {$inicio} ({$minutos} min) y se aceptó.");
+        $this->assertStringContainsString($contiene, $motivo);
+    }
+
+    private function assertAceptado(string $inicio, int $minutos): void
+    {
+        $this->assertNull(
+            $this->motivo($inicio, $minutos),
+            "Se esperaba aceptar {$inicio} ({$minutos} min) y se rechazó.",
+        );
+    }
+
+    /**
+     * Llama al guard real. Es privado porque nadie fuera del servicio debe
+     * decidir esto, así que el test entra por reflexión en vez de abrirlo.
+     */
+    private function motivo(string $inicio, int $minutos): ?string
+    {
+        $tz = Settings::googleTimezone();
+        $start = Carbon::parse($inicio, $tz);
+
+        $metodo = new ReflectionMethod(BotService::class, 'motivoFueraDeHorario');
+        $metodo->setAccessible(true);
+
+        return $metodo->invoke(
+            BotService::fromUser(User::factory()->create()),
+            $start,
+            $start->copy()->addMinutes($minutos),
+        );
+    }
+}
