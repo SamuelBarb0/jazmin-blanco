@@ -11,6 +11,7 @@ use App\Http\Controllers\LegalController;
 use App\Http\Controllers\PipelineController;
 use App\Http\Controllers\ServiceController;
 use App\Http\Controllers\ServiceMediaController;
+use App\Http\Controllers\WebManifestController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
@@ -20,6 +21,11 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', function () {
     return redirect()->route(Auth::check() ? 'dashboard' : 'login');
 })->name('home');
+
+// Manifiesto por página: el acceso directo abre la sección donde se creó, no
+// siempre el dashboard. Público (sin `auth`) porque el navegador lo pide sin
+// arrastrar la sesión, y no expone nada: solo rótulos e iconos.
+Route::get('app.webmanifest', WebManifestController::class)->name('manifest');
 
 // Páginas legales públicas. Meta las exige para publicar la app de WhatsApp.
 Route::get('privacidad', [LegalController::class, 'privacidad'])->name('legal.privacidad');
