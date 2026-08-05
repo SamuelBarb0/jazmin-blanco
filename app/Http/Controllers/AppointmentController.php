@@ -3,12 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Models\Appointment;
+use App\Models\Conversation;
 use App\Services\GoogleCalendarService;
+use App\Services\WhatsAppService;
 use App\Support\PatientLeads;
 use App\Support\Settings;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response;
 use Throwable;
@@ -113,8 +116,12 @@ class AppointmentController extends Controller
 
         $this->syncToGoogle($appointment);
 
+        // El aviso de «tu cita quedó agendada» es el PRIMERO de la cadena; los
+        // recordatorios de 24 h y 2 h vienen después, por el comando programado.
+        $aviso = $this->avisarPacienteAgendada($appointment);
+
         return redirect()->route('appointments.index')
-            ->with('success', $this->resultMessage($appointment, 'Cita creada.'));
+            ->with('success', $this->resultMessage($appointment, 'Cita creada.').$aviso);
     }
 
     public function update(Request $request, Appointment $appointment): RedirectResponse
@@ -190,6 +197,83 @@ class AppointmentController extends Controller
         }
     }
 
+    /**
+     * Avisa a la paciente de que su cita quedó agendada, y devuelve una nota
+     * para el mensaje de la pantalla — la doctora tiene que SABER si salió o
+     * no, porque hasta ahora agendaba a ciegas y no se enviaba nunca nada.
+     *
+     * Fuera de la ventana de 24 h WhatsApp solo entrega plantillas, así que
+     * ahí se usa la aprobada (`recordatorio_cita`) en vez de texto libre; si se
+     * mandara texto, Meta lo rechazaría con `131047` y nadie se enteraría.
+     */
+    private function avisarPacienteAgendada(Appointment $appointment): string
+    {
+        $telefono = $appointment->patient_phone ?: $appointment->lead?->phone;
+
+        if (blank($telefono)) {
+            return ' ⚠️ Sin teléfono: no se le avisó y tampoco recibirá recordatorios.';
+        }
+
+        if (! Settings::autoMessagingAllows($telefono)) {
+            return ' (No se le avisó: los mensajes automáticos están en pausa.)';
+        }
+
+        $whatsapp = WhatsAppService::fromConfig();
+        if (! $whatsapp->isConfigured()) {
+            return ' (No se le avisó: WhatsApp no está configurado.)';
+        }
+
+        $tz = Settings::googleTimezone();
+        $nombre = trim(explode(' ', trim((string) ($appointment->lead?->name ?: $appointment->patient_name)))[0] ?: '');
+        $nombre = $nombre !== '' ? mb_convert_case($nombre, MB_CASE_TITLE, 'UTF-8') : 'hola';
+        $cuando = $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('dddd D [de] MMMM [a las] h:mm a');
+        $clinica = Settings::botConfig()['clinic_name'];
+
+        $texto = "¡Hola {$nombre}! 👋 Tu cita quedó agendada para el {$cuando} en {$clinica}. "
+            .'Si necesitas reprogramarla, respóndenos por este chat.';
+
+        // La conversación decide si se puede escribir texto libre.
+        $conversacion = $appointment->lead
+            ? Conversation::where('lead_id', $appointment->lead->id)->where('channel', 'whatsapp')->latest('id')->first()
+            : null;
+
+        try {
+            if ($conversacion?->windowIsOpen()) {
+                $enviado = $whatsapp->sendText($telefono, $texto);
+                $via = '';
+            } else {
+                $plantilla = Settings::reminderConfig()['template'];
+                if (blank($plantilla)) {
+                    return ' ⚠️ No se le avisó: la paciente no ha escrito en 24 h y no hay plantilla aprobada configurada.';
+                }
+                $enviado = $whatsapp->sendTemplate($telefono, $plantilla, Settings::reminderConfig()['language'], [
+                    $nombre,
+                    $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('dddd D [de] MMMM'),
+                    $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('h:mm a'),
+                    $clinica,
+                ]);
+                $via = ' (por plantilla, porque no ha escrito en 24 h)';
+            }
+        } catch (Throwable $e) {
+            Log::error('No se pudo avisar de la cita agendada', ['appointment_id' => $appointment->id, 'error' => $e->getMessage()]);
+
+            return ' ⚠️ No se le pudo avisar por WhatsApp.';
+        }
+
+        if (! $enviado) {
+            return ' ⚠️ No se le pudo avisar por WhatsApp.';
+        }
+
+        // Queda en el historial del chat, para que la doctora vea lo que le llegó.
+        $conversacion?->messages()->create([
+            'role' => 'assistant',
+            'sent_by' => 'bot',
+            'content' => $texto,
+        ]);
+
+        return ' Se le avisó por WhatsApp'.$via.'.';
+    }
+
     private function resultMessage(Appointment $appointment, string $base): string
     {
         if (! Settings::hasGoogleCalendar()) {
@@ -230,11 +314,21 @@ class AppointmentController extends Controller
             ])?->id;
         }
 
+        // Si no se escribió teléfono pero el paciente del CRM tiene uno, se
+        // hereda. Sin esto la cita nace muda: los recordatorios resuelven el
+        // número por `patient_phone` o por el del lead, y al elegir a una
+        // paciente del desplegable la doctora da por hecho que ya se sabe su
+        // número. De 103 citas solo 22 tenían teléfono propio.
+        $telefono = $data['patient_phone'] ?? null;
+        if (blank($telefono) && $leadId) {
+            $telefono = $request->user()->leads()->whereKey($leadId)->value('phone');
+        }
+
         return [
             'lead_id' => $leadId,
             'service_id' => $data['service_id'] ?? null,
             'patient_name' => $data['patient_name'],
-            'patient_phone' => $data['patient_phone'] ?? null,
+            'patient_phone' => $telefono ?: null,
             'patient_email' => $data['patient_email'] ?? null,
             'starts_at' => $starts,
             'ends_at' => $starts->copy()->addMinutes($duration),
