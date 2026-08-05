@@ -561,6 +561,19 @@ class Settings
     }
 
     /**
+     * Plantilla del aviso «tu cita ha sido agendada» (distinta de la de
+     * recordatorio: aquí se confirma, no se recuerda).
+     *
+     * Creada en Meta el 2026-08-05 y aprobada aparte. Mientras esté pendiente,
+     * el envío falla y quien la usa cae en la de recordatorio, así que no hace
+     * falta tocar nada el día que la aprueben.
+     */
+    public static function confirmationTemplate(): string
+    {
+        return self::get('confirmation_template') ?: 'cita_agendada';
+    }
+
+    /**
      * ¿Se le puede escribir a este número de forma automática, sin que nadie
      * del consultorio lo haya pedido?
      *

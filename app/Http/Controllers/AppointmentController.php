@@ -242,17 +242,29 @@ class AppointmentController extends Controller
                 $enviado = $whatsapp->sendText($telefono, $texto);
                 $via = '';
             } else {
-                $plantilla = Settings::reminderConfig()['template'];
-                if (blank($plantilla)) {
-                    return ' ⚠️ No se le avisó: la paciente no ha escrito en 24 h y no hay plantilla aprobada configurada.';
-                }
-                $enviado = $whatsapp->sendTemplate($telefono, $plantilla, Settings::reminderConfig()['language'], [
-                    $nombre,
-                    $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('dddd D [de] MMMM'),
-                    $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('h:mm a'),
-                    $clinica,
-                ]);
+                $idioma = Settings::reminderConfig()['language'];
+                $dia = $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('dddd D [de] MMMM');
+                $hora = $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('h:mm a');
+
+                // Primero la plantilla propia de confirmación, que dice lo que
+                // pidió la doctora: «tu cita ha sido agendada».
+                $confirmacion = Settings::confirmationTemplate();
+                $enviado = filled($confirmacion)
+                    && $whatsapp->sendTemplate($telefono, $confirmacion, $idioma, [$nombre, $dia, $hora, $clinica]);
                 $via = ' (por plantilla, porque no ha escrito en 24 h)';
+
+                // Si falla —lo normal mientras Meta la tenga PENDIENTE— se cae a
+                // la de recordatorio, que sí está aprobada. Así el día que la
+                // aprueben esto empieza a usarla solo, sin tocar nada. Ojo al
+                // «el» delante del día: esta plantilla dice «tu cita {{2}}».
+                if (! $enviado) {
+                    $plantilla = Settings::reminderConfig()['template'];
+                    if (blank($plantilla)) {
+                        return ' ⚠️ No se le avisó: la paciente no ha escrito en 24 h y no hay plantilla aprobada configurada.';
+                    }
+                    $enviado = $whatsapp->sendTemplate($telefono, $plantilla, $idioma, [$nombre, "el {$dia}", $hora, $clinica]);
+                    $via = ' (por la plantilla de recordatorio; «'.$confirmacion.'» aún no está aprobada en Meta)';
+                }
             }
         } catch (Throwable $e) {
             Log::error('No se pudo avisar de la cita agendada', ['appointment_id' => $appointment->id, 'error' => $e->getMessage()]);
