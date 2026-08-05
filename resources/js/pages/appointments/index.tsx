@@ -272,9 +272,21 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                     </div>
                 )}
 
-                <div className="grid flex-1 gap-4 lg:grid-cols-[1fr_340px]">
+                {/* `grid-cols-1` en móvil y `minmax(0,...)` en escritorio: sin columnas
+                    declaradas, la pista implícita se dimensiona a `auto` (≈max-content) y
+                    crece con el contenido, así que ningún `min-w-0` del hijo la contiene.
+                    Y `1fr` a secas equivale a `minmax(auto,1fr)`, que tiene el mismo
+                    problema; hay que escribir el mínimo en 0 explícitamente. */}
+                <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
                     {/* Calendario mensual */}
-                    <div className="glass flex flex-col rounded-2xl p-4">
+                    {/* `min-w-0`: como hijo del grid, su `min-width: auto` le
+                        permitía negarse a encoger por debajo del ancho mínimo de
+                        la cuadrícula de 7 días. Con varias citas por día (los
+                        puntitos y el «+N») ese mínimo superaba la pantalla y la
+                        tarjeta estiraba la página: había que arrastrar de lado
+                        para ver el lunes. Mismo caso que el `min-w-0` de
+                        `SidebarInset`, un nivel más adentro. */}
+                    <div className="glass flex min-w-0 flex-col rounded-2xl p-4">
                         <div className="mb-3 flex items-center justify-between gap-2">
                             <h2 className="font-display text-xl capitalize">{monthFmt.format(cursor)}</h2>
                             <div className="flex items-center gap-1">
@@ -307,7 +319,11 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                             type="button"
                                             onClick={() => setSelectedKey(cell.key)}
                                             className={cn(
-                                                'flex h-full min-h-[44px] flex-col gap-0.5 rounded-lg border p-1 text-left transition-colors sm:min-h-[80px] sm:gap-1 sm:p-2',
+                                                // `min-w-0` + `overflow-hidden`: cada celda también es
+                                                // hija de un grid, así que sin esto los puntitos y el
+                                                // «+N» vuelven a imponer un ancho mínimo y la fila de
+                                                // 7 días se ensancha otra vez.
+                                                'flex h-full min-h-[44px] min-w-0 flex-col gap-0.5 overflow-hidden rounded-lg border p-1 text-left transition-colors sm:min-h-[80px] sm:gap-1 sm:p-2',
                                                 cell.inMonth ? 'bg-background/40' : 'bg-transparent opacity-40',
                                                 isSelected ? 'border-primary ring-primary/40 ring-1' : 'border-border/40 hover:border-border',
                                             )}

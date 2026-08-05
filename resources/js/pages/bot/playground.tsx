@@ -233,7 +233,12 @@ export default function BotPlayground({
                         <select
                             value={campaignId ?? ''}
                             onChange={(e) => setCampaignId(e.target.value ? Number(e.target.value) : null)}
-                            className="border-input bg-background h-8 rounded-md border px-2 text-xs focus-visible:ring-2 focus-visible:outline-hidden"
+                            /* Un `<select>` se ensancha hasta su opción más larga, y aquí
+                               las opciones son «campaña · servicio»: con nombres reales
+                               llegaba a 499px y sacaba la página de la pantalla en
+                               cualquier móvil. `min-w-0` le permite encoger (como hijo
+                               flex no lo haría) y `max-w-full` le pone techo. */
+                            className="border-input bg-background h-8 min-w-0 max-w-full flex-1 rounded-md border px-2 text-xs focus-visible:ring-2 focus-visible:outline-hidden"
                         >
                             <option value="">Sin campaña (atención general)</option>
                             {campaigns.map((c) => (
