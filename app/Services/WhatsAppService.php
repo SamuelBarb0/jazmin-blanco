@@ -37,6 +37,32 @@ class WhatsAppService
     }
 
     /**
+     * La misma configuración pero enviando por OTRA línea.
+     *
+     * Se responde por el número que RECIBIÓ el mensaje, no por el del `.env`:
+     * si hay más de una línea suscrita al webhook, contestar siempre por la de
+     * configuración le escribe a la paciente desde un número que ella nunca
+     * escribió — y Meta lo rechaza con `131047`, porque en esa línea no hay
+     * ventana de 24 h abierta.
+     *
+     * Sin id, o si es el mismo, se devuelve la instancia tal cual.
+     */
+    public function forPhone(?string $phoneId): self
+    {
+        if (blank($phoneId) || $phoneId === $this->phoneId) {
+            return $this;
+        }
+
+        return new self($this->token, $phoneId, $this->apiVersion);
+    }
+
+    /** Línea por la que envía esta instancia. */
+    public function phoneId(): ?string
+    {
+        return $this->phoneId;
+    }
+
+    /**
      * Envía un mensaje de texto al paciente.
      */
     public function sendText(string $to, string $body): bool

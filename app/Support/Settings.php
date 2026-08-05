@@ -561,6 +561,30 @@ class Settings
     }
 
     /**
+     * ¿Se le puede escribir a este número de forma automática, sin que nadie
+     * del consultorio lo haya pedido?
+     *
+     * Une los DOS frenos que ya existían pero que solo respetaba el flujo de
+     * respuestas: el interruptor general y la lista blanca de pruebas. Los
+     * envíos programados (recordatorios, aviso de pago) los ignoraban, así que
+     * apagar el bot no los detenía y la lista de pruebas no los limitaba.
+     *
+     * No aplica a lo que la doctora envía a mano desde la bandeja: eso es una
+     * persona decidiendo, no automatización.
+     */
+    public static function autoMessagingAllows(?string $phone): bool
+    {
+        if (! self::whatsappBotEnabled()) {
+            return false;
+        }
+
+        $lista = self::whatsappTestNumbers();
+
+        // Lista vacía = sin restricción (comportamiento normal).
+        return $lista === [] || self::phoneInList((string) $phone, $lista);
+    }
+
+    /**
      * Descanso diario (almuerzo), con el mismo formato que `scheduleHours()`:
      * día de la semana => ['HH:MM' inicio, 'HH:MM' fin] o null si ese día no hay.
      *

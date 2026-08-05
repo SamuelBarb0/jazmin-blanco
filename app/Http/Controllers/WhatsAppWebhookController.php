@@ -51,6 +51,12 @@ class WhatsAppWebhookController extends Controller
 
                 $profileName = data_get($value, 'contacts.0.profile.name');
 
+                // A QUÉ línea nuestra llegó esto. Meta siempre lo manda y hasta
+                // ahora se tiraba: por eso, con dos cuentas suscritas al mismo
+                // webhook, no había forma de saber de cuál venía cada mensaje ni
+                // por cuál responder.
+                $phoneNumberId = data_get($value, 'metadata.phone_number_id');
+
                 // Acuses de entrega. Meta acepta el envío con un 200 y solo
                 // DESPUÉS avisa por aquí si el mensaje se entregó o se cayó;
                 // sin esto, un fallo de entrega es invisible y parece que todo
@@ -107,6 +113,7 @@ class WhatsAppWebhookController extends Controller
                         profileName: $profileName ? (string) $profileName : null,
                         referral: $this->extractReferral($message),
                         media: $this->extractMedia($message),
+                        phoneNumberId: $phoneNumberId ? (string) $phoneNumberId : null,
                     );
                 }
             }

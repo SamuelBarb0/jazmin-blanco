@@ -58,6 +58,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
         public readonly ?string $profileName = null,
         public readonly ?array $referral = null,
         public readonly ?array $media = null,
+        public readonly ?string $phoneNumberId = null,
     ) {
     }
 
@@ -66,7 +67,18 @@ class ProcessWhatsAppMessage implements ShouldQueue
         // Se construye desde config (token + phone_id de las variables WHATSAPP_*).
         // NO por inyección: sin un binding, el contenedor lo crearía con token/
         // phone_id en null → isConfigured()=false → nunca respondería.
-        $whatsapp = WhatsAppService::fromConfig();
+        // Se responde por la línea que RECIBIÓ el mensaje, no por la del
+        // `.env`. Con dos cuentas suscritas al mismo webhook, contestar siempre
+        // por la de configuración le escribía a la paciente desde un número que
+        // ella nunca escribió, y Meta lo rechazaba con `131047`.
+        $whatsapp = WhatsAppService::fromConfig()->forPhone($this->phoneNumberId);
+
+        if (filled($this->phoneNumberId) && $this->phoneNumberId !== config('services.whatsapp.phone_id')) {
+            Log::warning('Mensaje recibido por una línea distinta a la configurada; se responde por la que lo recibió.', [
+                'recibido_por' => $this->phoneNumberId,
+                'configurada' => config('services.whatsapp.phone_id'),
+            ]);
+        }
 
         try {
             if (! $whatsapp->isConfigured()) {
@@ -127,6 +139,14 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 ['lead_id' => $lead->id, 'channel' => 'whatsapp'],
                 ['title' => 'WhatsApp · '.($lead->name ?: $this->from)],
             );
+
+            // Queda anotado por qué línea entró. Se reescribe si cambia: si el
+            // consultorio migra de número, la conversación pasa a la nueva y las
+            // respuestas la siguen.
+            if (filled($this->phoneNumberId) && $conversation->phone_number_id !== $this->phoneNumberId) {
+                $conversation->phone_number_id = $this->phoneNumberId;
+                $conversation->save();
+            }
 
             // Si llegó un referral nuevo, actualiza la campaña de la conversación.
             if ($campaign) {

@@ -69,6 +69,17 @@ class SendAppointmentReminders extends Command
             return self::SUCCESS;
         }
 
+        // El interruptor general apaga TODO lo automático, no solo las
+        // respuestas de Lore. Antes no se consultaba aquí: con el bot apagado
+        // los recordatorios seguían saliendo, que es justo lo que el «botón de
+        // pánico» debía impedir. En simulación no se frena: sirve para ver qué
+        // se enviaría sin enviar nada.
+        if (! $dry && ! Settings::whatsappBotEnabled()) {
+            $this->warn('El bot de WhatsApp está apagado; no se envía ningún recordatorio.');
+
+            return self::SUCCESS;
+        }
+
         $whatsapp = WhatsAppService::fromConfig();
         if (! $whatsapp->isConfigured() && ! $dry) {
             $this->error('WhatsApp no está configurado (faltan WHATSAPP_ACCESS_TOKEN o WHATSAPP_PHONE_ID).');
@@ -113,6 +124,16 @@ class SendAppointmentReminders extends Command
                     if (ReminderOptOut::has($user->id, $telefono)) {
                         $excluidos++;
                         $this->line("  <fg=gray>sin recordatorios</> {$cita->patient_name} · {$telefono}");
+
+                        continue;
+                    }
+
+                    // Modo prueba: con la lista blanca cargada, solo esos
+                    // números reciben. Sin esto, encender el canal para probarlo
+                    // le mandaba recordatorios a todas las pacientes reales.
+                    if (! $dry && ! Settings::autoMessagingAllows($telefono)) {
+                        $excluidos++;
+                        $this->line("  <fg=gray>fuera de la lista de pruebas</> {$cita->patient_name} · {$telefono}");
 
                         continue;
                     }

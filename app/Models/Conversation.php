@@ -9,7 +9,7 @@ use Illuminate\Support\Carbon;
 
 class Conversation extends Model
 {
-    protected $fillable = ['user_id', 'lead_id', 'campaign_id', 'title', 'channel', 'referral', 'bot_enabled', 'bot_paused_at', 'escalated_at', 'escalation_reason'];
+    protected $fillable = ['user_id', 'lead_id', 'campaign_id', 'title', 'channel', 'phone_number_id', 'referral', 'bot_enabled', 'bot_paused_at', 'escalated_at', 'escalation_reason'];
 
     /**
      * El valor por defecto tiene que estar TAMBIÉN aquí, no solo en la columna.

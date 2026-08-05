@@ -233,6 +233,18 @@ class CheckPendingPayments extends Command
             return;
         }
 
+        // El aviso es automático, así que respeta el interruptor general y la
+        // lista de pruebas. Va DESPUÉS de agendar a propósito: quien pagó tiene
+        // su cita creada igual; lo único que se calla es el mensaje.
+        if (! Settings::autoMessagingAllows($telefono)) {
+            Log::info('Pago confirmado pero el aviso automático está frenado.', [
+                'payment_link_id' => $link->id,
+                'motivo' => Settings::whatsappBotEnabled() ? 'fuera de la lista de pruebas' : 'bot apagado',
+            ]);
+
+            return;
+        }
+
         $texto = "¡Recibimos tu pago! 🎉 Tu cita quedó confirmada para el {$cuando}. "
             .'Te esperamos en '.Settings::botConfig()['clinic_address'].'. '
             .'Si necesitas reprogramarla, respóndenos por este chat.';
