@@ -173,7 +173,9 @@ const Sidebar = React.forwardRef<
                     side={side}
                 >
                     <SheetTitle className="sr-only">Sidebar Navigation</SheetTitle>
-                    <div className="flex h-full w-full flex-col">{children}</div>
+                    {/* Zona segura: en modo «app web» el menú también se dibuja
+                        bajo el reloj y bajo el indicador de inicio. */}
+                    <div className="safe-top safe-bottom flex h-full w-full flex-col">{children}</div>
                 </SheetContent>
             </Sheet>
         );

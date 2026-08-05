@@ -302,6 +302,27 @@
     background-repeat: no-repeat;
 }
 
+/* ================================================================
+   Zonas seguras del teléfono (modo «app web» / pantalla de inicio)
+   ================================================================
+   El <head> pide `viewport-fit=cover` con la barra de estado translúcida, así
+   que el contenido se dibuja DEBAJO de la hora, la batería y el indicador de
+   inicio. En el navegador no se nota, porque su propia barra ocupa ese espacio
+   y los insets valen 0. Pero abriendo la app desde la pantalla de inicio no hay
+   barra del navegador: el reloj quedaba pintado encima de la cabecera y tapaba
+   «Centro de comando».
+
+   En escritorio y en el navegador estas reglas no cambian nada: ahí
+   `env(safe-area-inset-*)` es 0. */
+
+.safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* Malla de gradiente atmosférica (aurora) */
 .aurora-mesh {
     background-image:

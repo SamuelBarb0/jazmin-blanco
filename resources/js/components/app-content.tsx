@@ -9,7 +9,9 @@ interface AppContentProps extends React.ComponentProps<'div'> {
 export function AppContent({ variant = 'header', children, className, ...props }: AppContentProps) {
     if (variant === 'sidebar') {
         return (
-            <SidebarInset className={cn('app-atmosphere', className)} {...props}>
+            // `safe-bottom`: sin esto, la última tarjeta queda debajo de la
+            // barra del indicador de inicio del iPhone en modo «app web».
+            <SidebarInset className={cn('app-atmosphere safe-bottom', className)} {...props}>
                 {children}
             </SidebarInset>
         );
