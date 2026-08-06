@@ -1,12 +1,12 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import AppLayout from '@/layouts/app-layout';
-import { channelMeta, colorOf, cop } from '@/lib/crm';
+import { adOrigin, channelMeta, colorOf, cop } from '@/lib/crm';
 import { cn } from '@/lib/utils';
 import { type BreadcrumbItem, type Lead, type SharedData, type Stage } from '@/types';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { motion } from 'motion/react';
-import { LayoutGrid, Pencil, Plus, Trash2 } from 'lucide-react';
+import { LayoutGrid, Megaphone, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Pacientes', href: '/leads' }];
@@ -78,6 +78,7 @@ export default function LeadsIndex({ leads, stages }: { leads: Lead[]; stages: S
                                     const ch = channelMeta[lead.channel] ?? channelMeta.otro;
                                     const ChIcon = ch.icon;
                                     const stageColor = lead.stage ? colorOf(lead.stage.color) : colorOf('slate');
+                                    const anuncio = adOrigin(lead);
                                     return (
                                         <motion.tr
                                             key={lead.id}
@@ -91,6 +92,17 @@ export default function LeadsIndex({ leads, stages }: { leads: Lead[]; stages: S
                                                     {lead.name}
                                                 </Link>
                                                 {lead.service_interest && <p className="text-muted-foreground text-xs">{lead.service_interest}</p>}
+                                                {/* El canal de todas dice "WhatsApp": esto es lo único que distingue
+                                                    a quien llegó por publicidad pagada. */}
+                                                {anuncio && (
+                                                    <span
+                                                        title={`Llegó del anuncio: ${anuncio}`}
+                                                        className="mt-1 inline-flex max-w-[18rem] items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                                                    >
+                                                        <Megaphone className="size-3 shrink-0" />
+                                                        <span className="truncate">{anuncio}</span>
+                                                    </span>
+                                                )}
                                                 {/* Canal + valor, visibles solo en móvil (las columnas están ocultas) */}
                                                 <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs md:hidden">
                                                     <span className={cn('inline-flex items-center gap-1', ch.className)}>

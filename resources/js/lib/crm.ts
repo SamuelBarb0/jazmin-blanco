@@ -31,6 +31,26 @@ export const channelMeta: Record<LeadChannel, { label: string; icon: LucideIcon;
     otro: { label: 'Otro', icon: CircleDot, className: 'text-slate-400' },
 };
 
+/**
+ * De qué anuncio viene un paciente, o null si no vino de ninguno.
+ *
+ * Se mira primero la campaña, que es la atribución de verdad (`campaign_id` se
+ * fija con el primer mensaje y ya no se sobrescribe). El `source` es el respaldo
+ * para los que llegaron antes de que se resolviera la campaña: ahí guardamos el
+ * titular del anuncio, así que cualquier valor que NO sea uno de los genéricos
+ * de la casa es un titular.
+ */
+const SOURCES_GENERICOS = ['whatsapp', 'agenda', 'manual', 'bot', 'instagram', 'otro'];
+
+export const adOrigin = (lead: { source?: string | null; campaign?: { name: string } | null }): string | null => {
+    if (lead.campaign?.name) return lead.campaign.name;
+
+    const source = lead.source?.trim();
+    if (!source || SOURCES_GENERICOS.includes(source.toLowerCase())) return null;
+
+    return source;
+};
+
 export const cop = (value: string | number | null): string | null => {
     if (value === null || value === '') return null;
     const n = Number(value);

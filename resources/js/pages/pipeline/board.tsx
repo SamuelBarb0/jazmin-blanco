@@ -1,7 +1,7 @@
 import { AnimatedNumber } from '@/components/ui/animated-number';
 import { Button } from '@/components/ui/button';
 import AppLayout from '@/layouts/app-layout';
-import { channelMeta, colorOf, cop } from '@/lib/crm';
+import { adOrigin, channelMeta, colorOf, cop } from '@/lib/crm';
 import { cn } from '@/lib/utils';
 import { type BreadcrumbItem, type Lead, type Stage } from '@/types';
 import {
@@ -19,7 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { Head, Link, router } from '@inertiajs/react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Pencil, Plus } from 'lucide-react';
+import { Megaphone, Pencil, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Pipeline', href: '/pipeline' }];
@@ -28,6 +28,9 @@ function LeadCard({ lead, dragging = false }: { lead: Lead; dragging?: boolean }
     const channel = channelMeta[lead.channel] ?? channelMeta.otro;
     const ChannelIcon = channel.icon;
     const value = cop(lead.value);
+    // El canal siempre dice "WhatsApp", también para quien llegó por un anuncio:
+    // sin esto no hay forma de distinguir en la tarjeta a quien vino pagando.
+    const anuncio = adOrigin(lead);
 
     return (
         <div
@@ -40,6 +43,15 @@ function LeadCard({ lead, dragging = false }: { lead: Lead; dragging?: boolean }
                 <div className="min-w-0">
                     <p className="truncate font-medium leading-tight">{lead.name}</p>
                     {lead.service_interest && <p className="text-muted-foreground truncate text-xs">{lead.service_interest}</p>}
+                    {anuncio && (
+                        <span
+                            title={`Llegó del anuncio: ${anuncio}`}
+                            className="mt-1.5 inline-flex max-w-full items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                        >
+                            <Megaphone className="size-3 shrink-0" />
+                            <span className="truncate">{anuncio}</span>
+                        </span>
+                    )}
                 </div>
                 <Link
                     href={route('leads.edit', lead.id)}

@@ -13,7 +13,7 @@ class LeadController extends Controller
     public function index(Request $request): Response
     {
         $leads = $request->user()->leads()
-            ->with(['stage', 'tags'])
+            ->with(['stage', 'tags', 'campaign:id,name'])
             ->orderByDesc('created_at')
             ->get();
 

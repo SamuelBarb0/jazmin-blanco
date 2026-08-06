@@ -6,9 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import AppLayout from '@/layouts/app-layout';
 import { cn } from '@/lib/utils';
-import { type BreadcrumbItem, type Campaign, type SharedData } from '@/types';
+import { type BreadcrumbItem, type Campaign, type CampaignResults, type SharedData } from '@/types';
 import { Head, router, useForm, usePage } from '@inertiajs/react';
-import { Megaphone, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { CalendarCheck, CreditCard, Megaphone, Pencil, Plus, RefreshCw, Sparkles, Trash2, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 import { FormEventHandler, useState } from 'react';
 
@@ -74,6 +74,7 @@ export default function CampaignsIndex({
     filters,
     statusCounts,
     total,
+    results,
 }: {
     campaigns: Campaign[];
     services: ServiceOpt[];
@@ -81,6 +82,7 @@ export default function CampaignsIndex({
     filters: { status: string | null };
     statusCounts: Record<string, number>;
     total: number;
+    results: Record<number, CampaignResults>;
 }) {
     const { flash } = usePage<SharedData>().props;
     const [open, setOpen] = useState(false);
@@ -250,6 +252,8 @@ export default function CampaignsIndex({
 
                                 {c.offer && <p className="text-muted-foreground line-clamp-3 text-sm">{c.offer}</p>}
 
+                                <CampaignResultsRow results={results[c.id]} />
+
                                 <div className="mt-auto flex justify-end gap-1 pt-1">
                                     <Button variant="ghost" size="icon" className="size-8" onClick={() => openEdit(c)}>
                                         <Pencil className="size-4" />
@@ -370,6 +374,36 @@ export default function CampaignsIndex({
                 </DialogContent>
             </Dialog>
         </AppLayout>
+    );
+}
+
+/**
+ * Lo que trajo la campaña: pacientes → citas → valoraciones pagadas, en ese
+ * orden porque es el embudo real y así se ve de un vistazo dónde se cae.
+ *
+ * Una campaña sin nadie NO pinta ceros: la mayoría son campañas viejas
+ * importadas de Meta que nunca trajeron a nadie por WhatsApp, y llenar la
+ * pantalla de ceros haría que los números que sí importan se pierdan.
+ */
+function CampaignResultsRow({ results }: { results?: CampaignResults }) {
+    if (!results || results.leads === 0) return null;
+
+    const items = [
+        { icon: Users, value: results.leads, label: results.leads === 1 ? 'paciente' : 'pacientes' },
+        { icon: CalendarCheck, value: results.appointments, label: results.appointments === 1 ? 'cita' : 'citas' },
+        { icon: CreditCard, value: results.paid, label: results.paid === 1 ? 'pago' : 'pagos' },
+    ];
+
+    return (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-muted/50 px-3 py-2">
+            {items.map(({ icon: Icon, value, label }) => (
+                <span key={label} className={cn('inline-flex items-center gap-1.5 text-xs', value > 0 ? 'text-foreground' : 'text-muted-foreground/60')}>
+                    <Icon className="size-3.5" />
+                    <span className="font-semibold tabular-nums">{value}</span>
+                    <span className="text-muted-foreground">{label}</span>
+                </span>
+            ))}
+        </div>
     );
 }
 

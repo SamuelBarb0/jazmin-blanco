@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Appointment;
 use App\Models\Campaign;
+use App\Models\PaymentLink;
 use App\Services\MetaAdsService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -41,7 +43,62 @@ class CampaignController extends Controller
             'filters' => ['status' => $status],
             'statusCounts' => $statusCounts,
             'total' => $request->user()->campaigns()->count(),
+            'results' => $this->results($request),
         ]);
+    }
+
+    /**
+     * Qué trajo cada campaña: pacientes, citas y valoraciones pagadas.
+     *
+     * Es lo que responde la única pregunta que importa de un anuncio —si se
+     * paga solo—, y el dato ya estaba: `leads.campaign_id` guarda la PRIMERA
+     * campaña que trajo a cada paciente y no se sobrescribe, así que sobrevive
+     * a que se borren las conversaciones.
+     *
+     * Tres consultas agrupadas y no una por campaña: así la pantalla cuesta lo
+     * mismo con 20 campañas que con 200. El alias es `conteo` y no `total` a
+     * propósito: `total` choca con los accesores de algunos modelos y Eloquent
+     * hace ganar al accesor, devolviendo ceros sin avisar.
+     *
+     * @return array<int,array{leads:int,appointments:int,paid:int}>
+     */
+    private function results(Request $request): array
+    {
+        $userId = $request->user()->id;
+
+        $leads = $request->user()->leads()
+            ->whereNotNull('campaign_id')
+            ->selectRaw('campaign_id, count(*) as conteo')
+            ->groupBy('campaign_id')
+            ->pluck('conteo', 'campaign_id');
+
+        $citas = Appointment::query()
+            ->join('leads', 'leads.id', '=', 'appointments.lead_id')
+            ->where('appointments.user_id', $userId)
+            ->whereNotNull('leads.campaign_id')
+            ->selectRaw('leads.campaign_id as campaign_id, count(*) as conteo')
+            ->groupBy('leads.campaign_id')
+            ->pluck('conteo', 'campaign_id');
+
+        $pagos = PaymentLink::query()
+            ->join('leads', 'leads.id', '=', 'payment_links.lead_id')
+            ->where('payment_links.user_id', $userId)
+            ->where('payment_links.status', PaymentLink::PAGADO)
+            ->whereNotNull('leads.campaign_id')
+            ->selectRaw('leads.campaign_id as campaign_id, count(*) as conteo')
+            ->groupBy('leads.campaign_id')
+            ->pluck('conteo', 'campaign_id');
+
+        return $leads->keys()
+            ->merge($citas->keys())
+            ->merge($pagos->keys())
+            ->unique()
+            ->mapWithKeys(fn ($id) => [(int) $id => [
+                'leads' => (int) ($leads[$id] ?? 0),
+                'appointments' => (int) ($citas[$id] ?? 0),
+                'paid' => (int) ($pagos[$id] ?? 0),
+            ]])
+            ->all();
     }
 
     /**

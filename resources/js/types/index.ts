@@ -56,6 +56,7 @@ export interface Lead {
     id: number;
     user_id: number;
     stage_id: number | null;
+    campaign_id: number | null;
     name: string;
     phone: string | null;
     email: string | null;
@@ -70,6 +71,15 @@ export interface Lead {
     updated_at: string;
     stage?: Stage | null;
     tags?: Tag[];
+    campaign?: { id: number; name: string } | null;
+}
+
+/** Lo que trajo una campaña. Va por separado de `Campaign` porque se calcula
+ *  con consultas agrupadas, no colgando de cada fila. */
+export interface CampaignResults {
+    leads: number;
+    appointments: number;
+    paid: number;
 }
 
 export interface Service {
