@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Settings\AiSettingsController;
+use App\Http\Controllers\Settings\EquipoController;
 use App\Http\Controllers\Settings\GoogleCalendarSettingsController;
 use App\Http\Controllers\Settings\PasswordController;
 use App\Http\Controllers\Settings\PaymentSettingsController;
@@ -17,6 +18,13 @@ Route::middleware('auth')->group(function () {
 
     Route::get('settings/password', [PasswordController::class, 'edit'])->name('password.edit');
     Route::put('settings/password', [PasswordController::class, 'update'])->name('password.update');
+
+    // Equipo de la clínica: quién más puede entrar. Solo la dueña (validado
+    // en el controlador, como el resto de ajustes sensibles).
+    Route::get('settings/equipo', [EquipoController::class, 'index'])->name('equipo.index');
+    Route::post('settings/equipo', [EquipoController::class, 'store'])->name('equipo.store');
+    Route::patch('settings/equipo/{miembro}', [EquipoController::class, 'toggle'])->name('equipo.toggle');
+    Route::delete('settings/equipo/{miembro}', [EquipoController::class, 'destroy'])->name('equipo.destroy');
 
     Route::get('settings/appearance', function () {
         return Inertia::render('settings/appearance');

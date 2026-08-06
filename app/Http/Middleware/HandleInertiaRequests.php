@@ -49,6 +49,10 @@ class HandleInertiaRequests extends Middleware
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
                 'generatedContext' => $request->session()->get('generatedContext'),
+                // La contraseña de un acceso recién creado. Viaja por flash
+                // justamente para que exista un solo instante: no se guarda en
+                // claro en ningún sitio y no se puede volver a consultar.
+                'clave_generada' => $request->session()->get('clave_generada'),
             ],
         ]);
     }

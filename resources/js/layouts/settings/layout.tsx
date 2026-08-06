@@ -32,6 +32,11 @@ const sidebarNavItems: NavItem[] = [
         icon: null,
     },
     {
+        title: 'Equipo',
+        url: '/settings/equipo',
+        icon: null,
+    },
+    {
         title: 'Apariencia',
         url: '/settings/appearance',
         icon: null,

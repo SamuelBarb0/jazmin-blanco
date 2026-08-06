@@ -49,6 +49,18 @@ class LoginRequest extends FormRequest
             ]);
         }
 
+        // Quitarle el acceso a alguien no puede ser borrarlo: se perdería el
+        // rastro de lo que hizo mientras lo tuvo. Se desactiva, y la sesión se
+        // cierra aquí mismo para que la contraseña correcta deje de servir.
+        if (! Auth::user()->activo) {
+            Auth::logout();
+            RateLimiter::hit($this->throttleKey());
+
+            throw ValidationException::withMessages([
+                'email' => 'Esta cuenta ya no tiene acceso. Habla con la clínica si crees que es un error.',
+            ]);
+        }
+
         RateLimiter::clear($this->throttleKey());
     }
 
