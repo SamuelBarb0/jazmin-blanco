@@ -118,7 +118,7 @@ class AppointmentController extends Controller
 
         // El aviso de «tu cita quedó agendada» es el PRIMERO de la cadena; los
         // recordatorios de 24 h y 2 h vienen después, por el comando programado.
-        $aviso = $this->avisarPacienteAgendada($appointment);
+        $aviso = $this->avisarPaciente($appointment);
 
         return redirect()->route('appointments.index')
             ->with('success', $this->resultMessage($appointment, 'Cita creada.').$aviso);
@@ -129,12 +129,31 @@ class AppointmentController extends Controller
         $this->authorizeAppointment($request, $appointment);
 
         $data = $this->validateData($request);
+        $antes = $appointment->starts_at?->copy();
+
         $appointment->update($this->toAttributes($request, $data));
 
         $this->syncToGoogle($appointment);
 
+        $aviso = '';
+
+        if ($antes && $appointment->starts_at->ne($antes)) {
+            // Las marcas de recordatorio se refieren a la fecha VIEJA y nada
+            // las volvía a poner en null: a quien ya había recibido el aviso de
+            // 24 h no le llegaba NINGUNO para la fecha nueva, y se quedaba con
+            // el recordatorio de la fecha anterior como última información.
+            // Se limpian aparte del aviso, y antes, porque esto hay que
+            // arreglarlo aunque el WhatsApp falle.
+            $appointment->forceFill([
+                'reminder_24h_sent_at' => null,
+                'reminder_2h_sent_at' => null,
+            ])->save();
+
+            $aviso = $this->avisarPaciente($appointment, 'reprogramada');
+        }
+
         return redirect()->route('appointments.index')
-            ->with('success', $this->resultMessage($appointment, 'Cita actualizada.'));
+            ->with('success', $this->resultMessage($appointment, 'Cita actualizada.').$aviso);
     }
 
     public function destroy(Request $request, Appointment $appointment): RedirectResponse
@@ -198,20 +217,26 @@ class AppointmentController extends Controller
     }
 
     /**
-     * Avisa a la paciente de que su cita quedó agendada, y devuelve una nota
-     * para el mensaje de la pantalla — la doctora tiene que SABER si salió o
-     * no, porque hasta ahora agendaba a ciegas y no se enviaba nunca nada.
+     * Avisa a la paciente de que su cita quedó agendada —o de que le cambió la
+     * fecha—, y devuelve una nota para el mensaje de la pantalla: la doctora
+     * tiene que SABER si salió o no, porque hasta ahora agendaba a ciegas y no
+     * se enviaba nunca nada.
      *
-     * Fuera de la ventana de 24 h WhatsApp solo entrega plantillas, así que
-     * ahí se usa la aprobada (`recordatorio_cita`) en vez de texto libre; si se
-     * mandara texto, Meta lo rechazaría con `131047` y nadie se enteraría.
+     * Fuera de la ventana de 24 h WhatsApp solo entrega plantillas, así que ahí
+     * se usan las aprobadas en vez de texto libre; si se mandara texto, Meta lo
+     * rechazaría con `131047` y nadie se enteraría.
+     *
+     * @param  string  $tipo  'agendada' (cita nueva) o 'reprogramada' (cambió la hora)
      */
-    private function avisarPacienteAgendada(Appointment $appointment): string
+    private function avisarPaciente(Appointment $appointment, string $tipo = 'agendada'): string
     {
+        $reprogramada = $tipo === 'reprogramada';
         $telefono = $appointment->patient_phone ?: $appointment->lead?->phone;
 
         if (blank($telefono)) {
-            return ' ⚠️ Sin teléfono: no se le avisó y tampoco recibirá recordatorios.';
+            return $reprogramada
+                ? ' ⚠️ Sin teléfono: no se le pudo avisar del cambio de fecha.'
+                : ' ⚠️ Sin teléfono: no se le avisó y tampoco recibirá recordatorios.';
         }
 
         if (! Settings::autoMessagingAllows($telefono)) {
@@ -229,8 +254,11 @@ class AppointmentController extends Controller
         $cuando = $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('dddd D [de] MMMM [a las] h:mm a');
         $clinica = Settings::botConfig()['clinic_name'];
 
-        $texto = "¡Hola {$nombre}! 👋 Tu cita quedó agendada para el {$cuando} en {$clinica}. "
-            .'Si necesitas reprogramarla, respóndenos por este chat.';
+        $texto = $reprogramada
+            ? "¡Hola {$nombre}! 👋 Tu cita fue reprogramada: queda para el {$cuando} en {$clinica}. "
+                .'Si ese horario no te sirve, respóndenos por este chat.'
+            : "¡Hola {$nombre}! 👋 Tu cita quedó agendada para el {$cuando} en {$clinica}. "
+                .'Si necesitas reprogramarla, respóndenos por este chat.';
 
         // La conversación decide si se puede escribir texto libre.
         $conversacion = $appointment->lead
@@ -246,28 +274,56 @@ class AppointmentController extends Controller
                 $dia = $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('dddd D [de] MMMM');
                 $hora = $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('h:mm a');
 
-                // Primero la plantilla propia de confirmación, que dice lo que
-                // pidió la doctora: «tu cita ha sido agendada».
-                $confirmacion = Settings::confirmationTemplate();
-                $enviado = filled($confirmacion)
-                    && $whatsapp->sendTemplate($telefono, $confirmacion, $idioma, [$nombre, $dia, $hora, $clinica]);
-                $via = ' (por plantilla, porque no ha escrito en 24 h)';
+                // Se prueban POR ORDEN: primero la que dice exactamente lo que
+                // pasó y, si Meta la rechaza —lo normal mientras esté
+                // PENDIENTE—, se cae a la siguiente, que ya está aprobada. Así
+                // el día que aprueben la nueva empieza a usarse sola, sin
+                // desplegar ni tocar ajustes.
+                //
+                // Ojo al «el» delante del día: las de agendada/reprogramada
+                // dicen «para el {{2}} a las {{3}}» y la de recordatorio «tu
+                // cita {{2}} ({{3}})», así que el parámetro NO es
+                // intercambiable palabra por palabra.
+                $candidatas = [];
 
-                // Si falla —lo normal mientras Meta la tenga PENDIENTE— se cae a
-                // la de recordatorio, que sí está aprobada. Así el día que la
-                // aprueben esto empieza a usarla solo, sin tocar nada. Ojo al
-                // «el» delante del día: esta plantilla dice «tu cita {{2}}».
-                if (! $enviado) {
-                    $plantilla = Settings::reminderConfig()['template'];
+                if ($reprogramada) {
+                    $candidatas[] = [Settings::rescheduleTemplate(), [$nombre, $dia, $hora, $clinica]];
+                }
+
+                $candidatas[] = [Settings::confirmationTemplate(), [$nombre, $dia, $hora, $clinica]];
+                $candidatas[] = [Settings::reminderConfig()['template'], [$nombre, "el {$dia}", $hora, $clinica]];
+
+                $enviado = false;
+                $via = '';
+                $intentadas = [];
+
+                foreach ($candidatas as [$plantilla, $parametros]) {
                     if (blank($plantilla)) {
-                        return ' ⚠️ No se le avisó: la paciente no ha escrito en 24 h y no hay plantilla aprobada configurada.';
+                        continue;
                     }
-                    $enviado = $whatsapp->sendTemplate($telefono, $plantilla, $idioma, [$nombre, "el {$dia}", $hora, $clinica]);
-                    $via = ' (por la plantilla de recordatorio; «'.$confirmacion.'» aún no está aprobada en Meta)';
+
+                    $intentadas[] = $plantilla;
+
+                    if ($whatsapp->sendTemplate($telefono, $plantilla, $idioma, $parametros)) {
+                        $enviado = true;
+                        $via = count($intentadas) === 1
+                            ? ' (por plantilla, porque no ha escrito en 24 h)'
+                            : ' (por la plantilla «'.$plantilla.'»; «'.$intentadas[0].'» aún no está aprobada en Meta)';
+
+                        break;
+                    }
+                }
+
+                if ($intentadas === []) {
+                    return ' ⚠️ No se le avisó: la paciente no ha escrito en 24 h y no hay plantilla aprobada configurada.';
                 }
             }
         } catch (Throwable $e) {
-            Log::error('No se pudo avisar de la cita agendada', ['appointment_id' => $appointment->id, 'error' => $e->getMessage()]);
+            Log::error('No se pudo avisar a la paciente de su cita', [
+                'appointment_id' => $appointment->id,
+                'tipo' => $tipo,
+                'error' => $e->getMessage(),
+            ]);
 
             return ' ⚠️ No se le pudo avisar por WhatsApp.';
         }
@@ -283,7 +339,7 @@ class AppointmentController extends Controller
             'content' => $texto,
         ]);
 
-        return ' Se le avisó por WhatsApp'.$via.'.';
+        return ($reprogramada ? ' Se le avisó del cambio por WhatsApp' : ' Se le avisó por WhatsApp').$via.'.';
     }
 
     private function resultMessage(Appointment $appointment, string $base): string

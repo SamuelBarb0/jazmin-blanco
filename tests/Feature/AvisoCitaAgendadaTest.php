@@ -148,6 +148,114 @@ class AvisoCitaAgendadaTest extends TestCase
         Http::assertSent(fn ($req) => ($req->data()['template']['name'] ?? null) === 'recordatorio_cita');
     }
 
+    /**
+     * Reprogramar dejaba a la paciente fuera por partida doble: no se le avisaba
+     * del cambio Y las marcas de recordatorio seguían apuntando a la fecha
+     * vieja, así que a quien ya había recibido el aviso de 24 h no le llegaba
+     * NINGUNO para la fecha nueva.
+     */
+    public function test_al_mover_la_cita_se_avisa_del_cambio(): void
+    {
+        $this->metaAceptaTodo();
+
+        $lead = Lead::create(['user_id' => $this->doctora->id, 'name' => 'Ana', 'phone' => '573001112233']);
+        $cita = $this->citaDe($lead, now()->addDays(3));
+
+        $this->actingAs($this->doctora)->patch(route('appointments.update', $cita), [
+            'lead_id' => $lead->id,
+            'patient_name' => 'Ana',
+            'starts_at' => now()->addDays(8)->format('Y-m-d H:i:s'),
+        ])->assertSessionHas('success', fn ($m) => str_contains($m, 'Se le avisó del cambio'));
+
+        Http::assertSent(fn ($req) => ($req->data()['template']['name'] ?? null) === 'cita_reprogramada');
+    }
+
+    public function test_al_mover_la_cita_se_borran_las_marcas_de_recordatorio(): void
+    {
+        $this->metaAceptaTodo();
+
+        $lead = Lead::create(['user_id' => $this->doctora->id, 'name' => 'Ana', 'phone' => '573001112233']);
+        $cita = $this->citaDe($lead, now()->addDays(3));
+        // Ya se le avisó de la fecha VIEJA.
+        $cita->forceFill(['reminder_24h_sent_at' => now(), 'reminder_2h_sent_at' => now()])->save();
+
+        $this->actingAs($this->doctora)->patch(route('appointments.update', $cita), [
+            'lead_id' => $lead->id,
+            'patient_name' => 'Ana',
+            'starts_at' => now()->addDays(8)->format('Y-m-d H:i:s'),
+        ])->assertRedirect();
+
+        $cita->refresh();
+        $this->assertNull($cita->reminder_24h_sent_at);
+        $this->assertNull($cita->reminder_2h_sent_at);
+    }
+
+    /**
+     * Editar el nombre o las notas no es reprogramar: si cualquier guardado
+     * avisara, a la paciente le llegaría un WhatsApp por cada corrección.
+     */
+    public function test_editar_sin_mover_la_hora_no_avisa_ni_borra_las_marcas(): void
+    {
+        $this->metaAceptaTodo();
+
+        $lead = Lead::create(['user_id' => $this->doctora->id, 'name' => 'Ana', 'phone' => '573001112233']);
+        $cuando = now()->addDays(3);
+        $cita = $this->citaDe($lead, $cuando);
+        $cita->forceFill(['reminder_24h_sent_at' => now()])->save();
+
+        $this->actingAs($this->doctora)->patch(route('appointments.update', $cita), [
+            'lead_id' => $lead->id,
+            'patient_name' => 'Ana',
+            'starts_at' => $cuando->format('Y-m-d H:i:s'),
+            'notes' => 'Llega 10 minutos antes',
+        ])->assertSessionHas('success', fn ($m) => ! str_contains($m, 'avisó'));
+
+        Http::assertNothingSent();
+        $this->assertNotNull($cita->refresh()->reminder_24h_sent_at);
+    }
+
+    /**
+     * Mientras Meta tenga `cita_reprogramada` en PENDIENTE, el aviso del cambio
+     * no puede perderse: cae en la de confirmación, que ya está aprobada y al
+     * menos lleva la fecha NUEVA.
+     */
+    public function test_si_la_de_reprogramada_no_esta_aprobada_cae_en_la_de_confirmacion(): void
+    {
+        Http::fake(function ($request) {
+            $nombre = $request->data()['template']['name'] ?? null;
+
+            return $nombre === 'cita_reprogramada'
+                ? Http::response(['error' => ['message' => 'Template not found or not approved']], 400)
+                : Http::response(['messages' => [['id' => 'wamid.x']]], 200);
+        });
+
+        $lead = Lead::create(['user_id' => $this->doctora->id, 'name' => 'Ana', 'phone' => '573001112233']);
+        $cita = $this->citaDe($lead, now()->addDays(3));
+
+        $this->actingAs($this->doctora)->patch(route('appointments.update', $cita), [
+            'lead_id' => $lead->id,
+            'patient_name' => 'Ana',
+            'starts_at' => now()->addDays(8)->format('Y-m-d H:i:s'),
+        ])->assertSessionHas('success', fn ($m) => str_contains($m, 'cita_agendada')
+            && str_contains($m, 'aún no está aprobada'));
+
+        Http::assertSent(fn ($req) => ($req->data()['template']['name'] ?? null) === 'cita_reprogramada');
+        Http::assertSent(fn ($req) => ($req->data()['template']['name'] ?? null) === 'cita_agendada');
+    }
+
+    private function citaDe(Lead $lead, $cuando): Appointment
+    {
+        return Appointment::create([
+            'user_id' => $this->doctora->id,
+            'lead_id' => $lead->id,
+            'patient_name' => $lead->name,
+            'patient_phone' => $lead->phone,
+            'starts_at' => $cuando,
+            'ends_at' => (clone $cuando)->addMinutes(45),
+            'status' => 'scheduled',
+        ]);
+    }
+
     public function test_con_los_mensajes_en_pausa_no_se_envia_nada(): void
     {
         $this->metaAceptaTodo();

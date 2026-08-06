@@ -574,6 +574,20 @@ class Settings
     }
 
     /**
+     * Plantilla del aviso «tu cita fue reprogramada».
+     *
+     * Va aparte de la de confirmación porque no dice lo mismo: a quien le
+     * mueven la hora, «tu cita ha sido agendada» le suena a cita nueva y puede
+     * dejarle en la cabeza las dos fechas. Mientras Meta la tenga pendiente,
+     * quien la usa cae en la de confirmación, que ya está aprobada y al menos
+     * lleva la fecha NUEVA.
+     */
+    public static function rescheduleTemplate(): string
+    {
+        return self::get('reschedule_template') ?: 'cita_reprogramada';
+    }
+
+    /**
      * ¿Se le puede escribir a este número de forma automática, sin que nadie
      * del consultorio lo haya pedido?
      *
