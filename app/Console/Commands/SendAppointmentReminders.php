@@ -229,19 +229,10 @@ class SendAppointmentReminders extends Command
      */
     private function telefono(Appointment $cita, string $codigoPais): ?string
     {
-        $bruto = $cita->patient_phone ?: $cita->lead?->phone;
-        $d = preg_replace('/\D/', '', (string) $bruto);
-
-        if (strlen($d) < 10) {
-            return null;
-        }
-
-        // Ya trae indicativo (57…, 1…, 34…): se deja como está.
-        if (strlen($d) > 10) {
-            return $d;
-        }
-
-        return $codigoPais.$d;
+        // La lógica vive en el modelo desde que se descubrió que el aviso al
+        // agendar tenía su propia copia SIN normalizar: a la misma paciente le
+        // llegaba el recordatorio y nunca la confirmación.
+        return $cita->telefonoWhatsapp($codigoPais);
     }
 
     /**

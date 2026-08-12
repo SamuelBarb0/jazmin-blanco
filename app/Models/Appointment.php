@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\Settings;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -49,6 +50,40 @@ class Appointment extends Model
     protected function serializeDate(DateTimeInterface $date): string
     {
         return $date->format('Y-m-d\TH:i:s');
+    }
+
+    /**
+     * El teléfono al que se le puede escribir por WhatsApp, ya con indicativo,
+     * o null si no hay uno utilizable.
+     *
+     * Meta EXIGE el indicativo de país. Un móvil colombiano de 10 dígitos
+     * enviado tal cual se acepta con un 200 y rebota después con
+     * `131026 Message undeliverable`: el fallo no se ve al enviar, solo
+     * aparece más tarde en `delivery_failures`. En producción, 67 de los 82
+     * teléfonos están guardados sin el 57.
+     *
+     * Vive aquí, en el modelo, y no en cada quien que lo necesite, porque ya
+     * se pagó el precio de tenerlo duplicado: el comando de recordatorios
+     * normalizaba y el aviso al agendar no, así que a la misma paciente le
+     * llegaba el recordatorio pero nunca la confirmación.
+     */
+    public function telefonoWhatsapp(?string $codigoPais = null): ?string
+    {
+        $digitos = preg_replace('/\D/', '', (string) ($this->patient_phone ?: $this->lead?->phone));
+
+        if (strlen($digitos) < 10) {
+            return null;
+        }
+
+        // Más de 10 dígitos = ya trae indicativo (57…, 1…, 34…); se respeta.
+        if (strlen($digitos) > 10) {
+            return $digitos;
+        }
+
+        // El indicativo vive en reminderConfig, NO en botConfig: `botConfig()`
+        // no tiene esa clave y devolvía null, o sea prefijo vacío y el número
+        // igual de roto que antes. Lo cazó la prueba.
+        return ($codigoPais ?: Settings::reminderConfig()['country_code']).$digitos;
     }
 
     public function user(): BelongsTo

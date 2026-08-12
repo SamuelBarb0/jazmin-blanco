@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Mail\CitaParaLaPaciente;
 use App\Models\Appointment;
 use App\Models\Conversation;
 use App\Services\GoogleCalendarService;
@@ -12,6 +13,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Inertia\Inertia;
 use Inertia\Response;
 use Throwable;
@@ -118,7 +120,8 @@ class AppointmentController extends Controller
 
         // El aviso de «tu cita quedó agendada» es el PRIMERO de la cadena; los
         // recordatorios de 24 h y 2 h vienen después, por el comando programado.
-        $aviso = $this->avisarPaciente($appointment);
+        $aviso = $this->avisarPaciente($appointment)
+            .$this->avisarPacientePorCorreo($appointment);
 
         return redirect()->route('appointments.index')
             ->with('success', $this->resultMessage($appointment, 'Cita creada.').$aviso);
@@ -149,7 +152,8 @@ class AppointmentController extends Controller
                 'reminder_2h_sent_at' => null,
             ])->save();
 
-            $aviso = $this->avisarPaciente($appointment, 'reprogramada');
+            $aviso = $this->avisarPaciente($appointment, 'reprogramada')
+                .$this->avisarPacientePorCorreo($appointment, 'reprogramada');
         }
 
         return redirect()->route('appointments.index')
@@ -231,7 +235,13 @@ class AppointmentController extends Controller
     private function avisarPaciente(Appointment $appointment, string $tipo = 'agendada'): string
     {
         $reprogramada = $tipo === 'reprogramada';
-        $telefono = $appointment->patient_phone ?: $appointment->lead?->phone;
+
+        // Con indicativo. Antes se mandaba el número crudo y, como 67 de los
+        // 82 teléfonos están guardados a 10 dígitos, Meta aceptaba el envío
+        // con 200 y lo rebotaba después con `131026`: la confirmación no
+        // llegaba y no había forma de notarlo desde aquí. Los recordatorios sí
+        // llegaban, porque su comando sí normalizaba.
+        $telefono = $appointment->telefonoWhatsapp();
 
         if (blank($telefono)) {
             return $reprogramada
@@ -251,7 +261,15 @@ class AppointmentController extends Controller
         $tz = Settings::googleTimezone();
         $nombre = trim(explode(' ', trim((string) ($appointment->lead?->name ?: $appointment->patient_name)))[0] ?: '');
         $nombre = $nombre !== '' ? mb_convert_case($nombre, MB_CASE_TITLE, 'UTF-8') : 'hola';
-        $cuando = $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('dddd D [de] MMMM [a las] h:mm a');
+        // shiftTimezone y NO tz(): `starts_at` guarda la hora de PARED del
+        // consultorio (lo dice `Appointment::serializeDate()`), pero
+        // `app.timezone` es UTC, así que Laravel la lee etiquetada como UTC.
+        // `tz()` convierte el instante y le restaba 5 horas —una cita de las
+        // 2:00 p. m. se le anunciaba a la paciente a las 9:00 a. m.—;
+        // `shiftTimezone()` solo cambia la etiqueta y conserva el reloj, que es
+        // lo que aquí hace falta. Los recordatorios ya lo hacían bien
+        // (SendAppointmentReminders:283) y este camino se había quedado atrás.
+        $cuando = $appointment->starts_at->copy()->shiftTimezone($tz)->locale('es')->isoFormat('dddd D [de] MMMM [a las] h:mm a');
         $clinica = Settings::botConfig()['clinic_name'];
 
         $texto = $reprogramada
@@ -271,8 +289,8 @@ class AppointmentController extends Controller
                 $via = '';
             } else {
                 $idioma = Settings::reminderConfig()['language'];
-                $dia = $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('dddd D [de] MMMM');
-                $hora = $appointment->starts_at->copy()->tz($tz)->locale('es')->isoFormat('h:mm a');
+                $dia = $appointment->starts_at->copy()->shiftTimezone($tz)->locale('es')->isoFormat('dddd D [de] MMMM');
+                $hora = $appointment->starts_at->copy()->shiftTimezone($tz)->locale('es')->isoFormat('h:mm a');
 
                 // Se prueban POR ORDEN: primero la que dice exactamente lo que
                 // pasó y, si Meta la rechaza —lo normal mientras esté
@@ -340,6 +358,54 @@ class AppointmentController extends Controller
         ]);
 
         return ($reprogramada ? ' Se le avisó del cambio por WhatsApp' : ' Se le avisó por WhatsApp').$via.'.';
+    }
+
+    /**
+     * El mismo aviso, por correo.
+     *
+     * Va APARTE del de WhatsApp y no dentro de él porque los dos canales fallan
+     * por motivos distintos y no se sustituyen: WhatsApp necesita teléfono
+     * registrado y, fuera de la ventana de 24 h, una plantilla aprobada por
+     * Meta; el correo solo necesita dirección. De 102 citas solo 31 tienen
+     * teléfono, así que para buena parte de las pacientes este correo es el
+     * único aviso que van a recibir.
+     *
+     * Devuelve un trozo de frase para el mensaje de «Cita creada», igual que
+     * `avisarPaciente()`: la doctora tiene que saber, en el momento de guardar,
+     * qué salió y qué no. Nunca lanza: que el correo falle no puede tumbar el
+     * guardado de una cita que ya está creada y sincronizada con Google.
+     *
+     * @param  string  $tipo  'agendada' (cita nueva) o 'reprogramada' (cambió la hora)
+     */
+    private function avisarPacientePorCorreo(Appointment $appointment, string $tipo = 'agendada'): string
+    {
+        $correo = $appointment->patient_email ?: $appointment->lead?->email;
+
+        if (blank($correo)) {
+            return '';   // Sin correo no hay nada que avisar ni de qué informar.
+        }
+
+        // El mismo freno que el de WhatsApp: si los mensajes automáticos están
+        // en pausa, es para todos los canales. Se comprueba con el teléfono
+        // porque la lista blanca está hecha de números; sin teléfono se mira
+        // solo el interruptor general.
+        if (! Settings::autoMessagingAllows($appointment->patient_phone ?: $appointment->lead?->phone)) {
+            return '';
+        }
+
+        try {
+            Mail::to($correo)->send(new CitaParaLaPaciente($appointment, $tipo));
+        } catch (Throwable $e) {
+            Log::error('No se pudo enviar el correo de la cita', [
+                'appointment_id' => $appointment->id,
+                'tipo' => $tipo,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ' ⚠️ No se le pudo enviar el correo.';
+        }
+
+        return ' Se le envió el correo a '.$correo.'.';
     }
 
     private function resultMessage(Appointment $appointment, string $base): string
