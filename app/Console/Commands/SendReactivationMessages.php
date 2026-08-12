@@ -121,7 +121,7 @@ class SendReactivationMessages extends Command
         $pendientes = 0;
 
         foreach ($this->users() as $user) {
-            $candidatas = $this->candidatas($user, $config['hours']);
+            $candidatas = $this->candidatas($user, $config['hours'], $config['min_inbound_at']);
             $pendientes += $candidatas->count();
 
             foreach ($candidatas as $conversacion) {
@@ -193,9 +193,13 @@ class SendReactivationMessages extends Command
 
         $this->newLine();
         $restantes = max(0, $pendientes - $enviados - $fallidos - $sinTelefono - $excluidos);
+        $desde = $config['min_inbound_at']
+            ? ' · solo chats con actividad desde '.$config['min_inbound_at']->format('d/m/Y H:i')
+            : ' · SIN fecha de corte (entra todo el histórico)';
+
         $this->info(($dry ? 'Simulación · ' : '')
             ."Reactivaciones: {$enviados} · fallidas: {$fallidos} · sin teléfono: {$sinTelefono} · excluidas: {$excluidos}"
-            ." · umbral: {$config['hours']}h · tope: {$tope}");
+            ." · umbral: {$config['hours']}h · tope: {$tope}".$desde);
 
         if ($restantes > 0) {
             $this->line("<fg=yellow>Quedan {$restantes} en cola por el tope; salen en las siguientes corridas.</>");
@@ -210,9 +214,13 @@ class SendReactivationMessages extends Command
      * Los filtros baratos van en SQL y los que exigen mirar los mensajes se
      * resuelven después en memoria, sobre un conjunto ya pequeño.
      *
+     * `$desde` es la línea de salida: por debajo de esa fecha la conversación ya
+     * estaba fría cuando esto se encendió, y la doctora decidió empezar solo con
+     * las nuevas. Sin ella, encenderlo suelta los 104 chats acumulados.
+     *
      * @return Collection<int,Conversation>
      */
-    private function candidatas(User $user, int $horas): Collection
+    private function candidatas(User $user, int $horas, ?Carbon $desde): Collection
     {
         $limite = now()->subHours($horas);
 
@@ -248,12 +256,17 @@ class SendReactivationMessages extends Command
         return $conversaciones
             // Nunca agendó nada: es la condición que pidió la doctora.
             ->reject(fn (Conversation $c) => in_array($c->lead_id, $conAgenda, true))
-            ->filter(function (Conversation $c) use ($limite) {
+            ->filter(function (Conversation $c) use ($limite, $desde) {
                 $ultimo = $this->ultimoInbound[$c->id] ?? null;
 
                 // Sin ningún mensaje SUYO no hay interés que reactivar: puede
                 // ser una conversación creada por el CRM al agendar o importar.
-                return $ultimo !== null && $ultimo->lt($limite);
+                if ($ultimo === null || ! $ultimo->lt($limite)) {
+                    return false;
+                }
+
+                // Ya estaba fría antes de encender esto: no es "cliente nuevo".
+                return $desde === null || $ultimo->gte($desde);
             })
             // Los más recientes primero: un silencio de 2 días se recupera mucho
             // mejor que uno de 3 meses, y con tope por corrida el orden decide

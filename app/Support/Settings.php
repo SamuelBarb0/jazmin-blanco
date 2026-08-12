@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Setting;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Throwable;
 
@@ -553,16 +554,30 @@ class Settings
      * reporten el número y Meta baje la calidad de la línea. Con tope, el atasco
      * se reparte a lo largo de las horas siguientes.
      *
-     * @return array{enabled:bool,hours:int,template:string,language:string,max_per_run:int}
+     * `min_inbound_at` es la LÍNEA DE SALIDA: solo entran conversaciones cuyo
+     * último mensaje de la paciente sea posterior a esa fecha. Existe porque al
+     * encender esto había 104 conversaciones frías acumuladas y la doctora quiso
+     * empezar solo con las nuevas.
+     *
+     * Se resuelve con una fecha y NO marcando esas 104 filas como "ya enviado",
+     * que era la otra forma obvia: eso habría dejado en la base 104
+     * reactivaciones que nunca salieron, indistinguibles de las reales en
+     * cualquier auditoría posterior. Además así es reversible — se borra el
+     * ajuste y la cola vuelve — y no se toca ni una fila de datos.
+     *
+     * @return array{enabled:bool,hours:int,template:string,language:string,max_per_run:int,min_inbound_at:?Carbon}
      */
     public static function reactivationConfig(): array
     {
+        $desde = self::get('reactivation_min_inbound_at');
+
         return [
             'enabled' => self::get('reactivation_enabled', '0') === '1',
             'hours' => max(1, (int) (self::get('reactivation_hours') ?: 48)),
             'template' => self::get('reactivation_template') ?: 'reactivacion_lead',
             'language' => self::get('reactivation_language') ?: 'es',
             'max_per_run' => max(1, (int) (self::get('reactivation_max_per_run') ?: 20)),
+            'min_inbound_at' => filled($desde) ? Carbon::parse($desde) : null,
         ];
     }
 
@@ -584,6 +599,15 @@ class Settings
             if (array_key_exists($campo, $config)) {
                 self::put($key, $config[$campo] === null ? null : (string) $config[$campo]);
             }
+        }
+
+        if (array_key_exists('min_inbound_at', $config)) {
+            $valor = $config['min_inbound_at'];
+
+            self::put(
+                'reactivation_min_inbound_at',
+                blank($valor) ? null : Carbon::parse($valor)->toDateTimeString(),
+            );
         }
     }
 

@@ -273,6 +273,54 @@ class ReactivacionDeLeadsTest extends TestCase
         $this->assertStringContainsString('agendar una valoración con la Dra. Jasmin Blanco', $ultimo->content);
     }
 
+    /**
+     * La decisión de la doctora al encenderlo: los 104 chats ya fríos no
+     * reciben nada, solo los que se enfríen a partir de ahora.
+     */
+    public function test_la_fecha_de_corte_deja_fuera_a_los_que_ya_estaban_frios(): void
+    {
+        $this->chatFrio('Vieja', '3001110000', 24 * 30);
+        $this->chatFrio('Nueva', '3001119999', 72);
+
+        // Se enciende "ahora", con 96 h de historia por detrás: la de 72 h entra,
+        // la de 30 días no.
+        Settings::setReactivationConfig(['min_inbound_at' => now()->subHours(96)]);
+
+        $this->correr();
+
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($req) => $req->data()['to'] === '573001119999');
+    }
+
+    /** Sin fecha de corte se comporta como antes: entra todo el histórico. */
+    public function test_sin_fecha_de_corte_entra_todo_el_historico(): void
+    {
+        $this->chatFrio('Vieja', '3001110000', 24 * 30);
+
+        Settings::setReactivationConfig(['min_inbound_at' => null]);
+
+        $this->correr();
+
+        Http::assertSentCount(1);
+    }
+
+    /**
+     * Quitar el ajuste devuelve la cola. Es lo que hace que la decisión sea
+     * reversible sin haber tocado ni una fila de datos.
+     */
+    public function test_borrar_la_fecha_de_corte_devuelve_la_cola(): void
+    {
+        $this->chatFrio('Vieja', '3001110000', 24 * 30);
+
+        Settings::setReactivationConfig(['min_inbound_at' => now()->subHours(96)]);
+        $this->correr();
+        Http::assertNothingSent();
+
+        Settings::setReactivationConfig(['min_inbound_at' => null]);
+        $this->correr();
+        Http::assertSentCount(1);
+    }
+
     public function test_apagada_en_la_configuracion_no_hace_nada(): void
     {
         $this->chatFrio('Ana', '3001112233', 72);
