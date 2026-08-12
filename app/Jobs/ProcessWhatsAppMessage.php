@@ -334,29 +334,54 @@ class ProcessWhatsAppMessage implements ShouldQueue
             return null;
         }
 
-        // Si Meta Ads está conectado, emparejamos con la campaña real importada.
-        // El referral trae el ID del ANUNCIO, no de la campaña, así que pedimos
-        // a la Marketing API la campaña padre (lo cacheamos un día).
-        $ads = MetaAdsService::fromConfig();
-        if ($ads->isConfigured()) {
-            $campaignId = Cache::remember(
-                'meta_ad_campaign_'.$sourceId,
-                now()->addDay(),
-                fn () => $ads->resolveAdCampaignId((string) $sourceId),
-            );
-
-            if (filled($campaignId)) {
-                $matched = $doctor->campaigns()->where('meta_campaign_id', $campaignId)->first();
-                if ($matched) {
-                    return $matched;
-                }
-            }
-        }
-
         $headline = trim((string) ($this->referral['headline'] ?? ''));
         $body = trim((string) ($this->referral['body'] ?? ''));
 
-        // Sin Meta Ads o sin coincidencia: auto-registro por ID de anuncio.
+        // Si Meta Ads está conectado, emparejamos con la campaña real. El
+        // referral trae el ID del ANUNCIO, no de la campaña, así que pedimos a
+        // la Marketing API la campaña padre (lo cacheamos un día).
+        $ads = MetaAdsService::fromConfig();
+        if ($ads->isConfigured()) {
+            // La clave lleva `v2` porque antes se cacheaba solo el id (una
+            // cadena) y ahora se guarda id + nombre: un valor viejo con la
+            // forma antigua reventaría al leerlo como array.
+            $padre = Cache::remember(
+                'meta_ad_campaign_v2_'.$sourceId,
+                now()->addDay(),
+                fn () => $ads->resolveAdCampaign((string) $sourceId),
+            );
+
+            if ($padre) {
+                // Se registra LA CAMPAÑA, no el anuncio.
+                //
+                // Antes, si la campaña no estaba importada todavía, se caía al
+                // auto-registro de abajo y se guardaba una fila por ANUNCIO.
+                // Con eso, una misma campaña aparecía varias veces con el
+                // nombre repetido, sus conversaciones quedaban repartidas
+                // entre las copias, y al importar después entraba OTRA fila
+                // más —la de verdad— con cero chats. Imposible saber qué
+                // campaña funciona.
+                //
+                // Guardándola con el id de la campaña, la importación posterior
+                // cae sobre esta misma fila y la actualiza en vez de duplicar.
+                return $doctor->campaigns()->firstOrCreate(
+                    ['meta_campaign_id' => $padre['id']],
+                    [
+                        'name' => $padre['name'] !== '' ? Str::limit($padre['name'], 250, '') : 'Campaña '.$padre['id'],
+                        // El texto del anuncio como punto de partida de la
+                        // oferta; la doctora puede cambiarlo. Solo al crear:
+                        // nunca pisa lo que ella haya escrito.
+                        'offer' => $body !== '' ? $body : null,
+                        'platform' => 'meta',
+                        'is_active' => true,
+                    ],
+                );
+            }
+        }
+
+        // Sin Meta Ads conectado, o con Meta sin responder, no hay forma de
+        // saber la campaña padre: se registra por ID de anuncio, que es el
+        // único identificador estable que tenemos.
         return $doctor->campaigns()->firstOrCreate(
             ['meta_campaign_id' => (string) $sourceId],
             [

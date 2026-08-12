@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use Throwable;
 
 /**
  * Lectura de campañas desde la Marketing API de Meta (Administrador de Anuncios).
@@ -91,21 +93,48 @@ class MetaAdsService
      * devuelve el ID de la campaña a la que pertenece, para poder emparejar el
      * lead con la campaña importada. Null si no se pudo resolver.
      */
-    public function resolveAdCampaignId(string $adId): ?string
+    /**
+     * La campaña padre de un anuncio: id Y nombre.
+     *
+     * Devuelve los dos porque con el id suelto no se puede registrar la
+     * campaña con un nombre que alguien entienda, y registrarla es justo lo
+     * que evita que cada anuncio acabe guardado como si fuera una campaña
+     * aparte —con el mismo nombre repetido y las conversaciones repartidas
+     * entre las copias—.
+     *
+     * @return array{id:string,name:string}|null
+     */
+    public function resolveAdCampaign(string $adId): ?array
     {
         if (! $this->isConfigured()) {
             return null;
         }
 
-        $response = Http::acceptJson()->timeout(20)->get(
-            "https://graph.facebook.com/{$this->apiVersion}/{$adId}",
-            ['fields' => 'campaign{id,name}', 'access_token' => $this->token],
-        );
+        try {
+            $response = Http::acceptJson()->timeout(20)->get(
+                "https://graph.facebook.com/{$this->apiVersion}/{$adId}",
+                ['fields' => 'campaign{id,name}', 'access_token' => $this->token],
+            );
+        } catch (Throwable $e) {
+            // `failed()` cubre los errores HTTP, pero una caída de red o un
+            // timeout lanzan. Esto se llama desde el job que responde a la
+            // paciente: sin este catch, que Meta tarde de más la deja sin
+            // respuesta por un dato que solo sirve para atribuir la campaña.
+            Log::warning('No se pudo resolver la campaña del anuncio en Meta', [
+                'ad_id' => $adId,
+                'error' => $e->getMessage(),
+            ]);
 
-        if ($response->failed()) {
             return null;
         }
 
-        return $response->json('campaign.id');
+        if ($response->failed() || blank($response->json('campaign.id'))) {
+            return null;
+        }
+
+        return [
+            'id' => (string) $response->json('campaign.id'),
+            'name' => trim((string) $response->json('campaign.name')),
+        ];
     }
 }
