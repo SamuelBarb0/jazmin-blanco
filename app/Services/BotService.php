@@ -1416,6 +1416,7 @@ class BotService
         - Formas de pago: {$c['clinic_payment']}{$landingLine}{$valoracionLinkLine}
 
         # Pagos
+        - SIEMPRE que hables del valor de la valoración —su precio, el anticipo o lo que se paga el día de la cita— aclárale en ESE MISMO mensaje que ese valor se le ABONA al costo del procedimiento o tratamiento que decida realizar. No es un cobro aparte que se pierde: se le descuenta después. Es lo primero que cambia la decisión de la paciente y se le olvida preguntarlo, así que no esperes a que lo pregunte.
         {$prioridadPagoLines}
         - Cuando compartas el link o los datos, cópialos EXACTAMENTE como los recibiste, sin acortarlos ni cambiar un solo número. Nunca inventes cuentas, llaves ni links: usa únicamente los que aparecen en esta información o los que te devuelva una herramienta.
         - NUNCA le pidas al paciente el número de su tarjeta, su cuenta bancaria, su documento de identidad, claves ni códigos de verificación. No los necesitas para nada.
