@@ -46,6 +46,14 @@ class FusionarCampanasDeAnuncios extends Command
         $fusionadas = 0;
         $movidos = ['conversaciones' => 0, 'leads' => 0, 'media' => 0];
 
+        // En seco no se escribe nada, así que la primera fila de una campaña
+        // no llega a convertirse en el destino de las siguientes. Sin llevar
+        // la cuenta aquí, la simulación diría «se convierte en la campaña
+        // real» por cada anuncio del mismo grupo —cinco veces cuando en la
+        // corrida real solo pasa dos—, y una simulación que miente es peor
+        // que no tenerla.
+        $destinosPrevistos = [];
+
         foreach ($filas as $fila) {
             $padre = $ads->resolveAdCampaign((string) $fila->meta_campaign_id);
 
@@ -59,6 +67,10 @@ class FusionarCampanasDeAnuncios extends Command
                 ->where('user_id', $fila->user_id)
                 ->where('meta_campaign_id', $padre['id'])
                 ->first();
+
+            if (! $destino && isset($destinosPrevistos[$padre['id']])) {
+                $destino = $destinosPrevistos[$padre['id']];
+            }
 
             $this->line("  <fg=yellow>#{$fila->id}</> «".Str::limit((string) $fila->name, 34).'» es un ANUNCIO de «'
                 .Str::limit($padre['name'], 34).'»');
@@ -76,6 +88,9 @@ class FusionarCampanasDeAnuncios extends Command
                 $conv, $leads, $media));
 
             if ($seco) {
+                if (! $destino) {
+                    $destinosPrevistos[$padre['id']] = $fila;
+                }
                 $fusionadas++;
 
                 continue;
