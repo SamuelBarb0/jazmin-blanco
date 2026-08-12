@@ -85,6 +85,63 @@ class AgendaHorarioTest extends TestCase
         $this->assertRechazado(self::SABADO.' 12:45', 30, 'fuera del horario');
     }
 
+    // ───────────────── Días sueltos cerrados a mano ─────────────────
+
+    public function test_un_dia_cerrado_a_mano_no_se_puede_agendar(): void
+    {
+        // Un miércoles normal, en el que sí se atiende.
+        $this->assertAceptado(self::MIERCOLES.' 10:00', 30);
+
+        Settings::setClosedDays([self::MIERCOLES => 'Congreso']);
+
+        // Y ahora no, aunque el horario semanal siga diciendo que abre.
+        $this->assertRechazado(self::MIERCOLES.' 10:00', 30, 'no atiende el');
+    }
+
+    /**
+     * El motivo es para la clínica. Decirle a la paciente «cerrado por
+     * vacaciones» solo invita a negociar, y de paso cuenta cosas de la doctora
+     * que no le corresponden a nadie más.
+     */
+    public function test_el_motivo_del_cierre_no_se_le_cuenta_a_la_paciente(): void
+    {
+        Settings::setClosedDays([self::MIERCOLES => 'Cirugía de la doctora']);
+
+        $motivo = $this->motivo(self::MIERCOLES.' 10:00', 30);
+
+        $this->assertStringNotContainsString('Cirugía', (string) $motivo);
+    }
+
+    public function test_reabrir_un_dia_lo_devuelve_a_la_agenda(): void
+    {
+        Settings::setClosedDays([self::MIERCOLES => '']);
+        $this->assertRechazado(self::MIERCOLES.' 10:00', 30, 'no atiende el');
+
+        Settings::setClosedDays([]);
+        $this->assertAceptado(self::MIERCOLES.' 10:00', 30);
+    }
+
+    public function test_las_fechas_ya_pasadas_no_se_guardan(): void
+    {
+        // Cerrar ayer no cambia nada y la lista crecería para siempre.
+        Settings::setClosedDays([
+            now()->subDay()->format('Y-m-d') => 'ya pasó',
+            now()->addDay()->format('Y-m-d') => 'mañana',
+        ]);
+
+        $guardados = Settings::closedDays();
+
+        $this->assertCount(1, $guardados);
+        $this->assertArrayHasKey(now()->addDay()->format('Y-m-d'), $guardados);
+    }
+
+    public function test_una_fecha_con_formato_raro_se_ignora_en_vez_de_romper(): void
+    {
+        Settings::put('schedule_closed_days', json_encode(['no-es-fecha' => 'x', '2099-01-01' => 'ok']));
+
+        $this->assertSame(['2099-01-01' => 'ok'], Settings::closedDays());
+    }
+
     private function assertRechazado(string $inicio, int $minutos, string $contiene): void
     {
         $motivo = $this->motivo($inicio, $minutos);

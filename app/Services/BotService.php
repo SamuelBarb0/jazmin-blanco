@@ -705,6 +705,29 @@ class BotService
         // ya había PAGADO para entonces, así que el error se cobraba.
         $duracion = max(15, (int) ($this->resolveService((string) ($input['servicio'] ?? ''))?->duration_minutes ?: self::DURACION_POR_DEFECTO));
 
+        // Si NINGÚN día del rango se atiende —todos cerrados a mano o fuera del
+        // horario semanal— no hay nada que preguntarle a Google: se sale antes
+        // de la llamada. Ahorra una petición y, sobre todo, hace que la
+        // respuesta siga siendo correcta aunque el calendario no responda.
+        $abiertos = 0;
+        for ($i = 0; $i < $days; $i++) {
+            $d = $start->copy()->addDays($i);
+            if (! Settings::isClosedOn($d) && ($hours[$d->dayOfWeek] ?? null)) {
+                $abiertos++;
+            }
+        }
+
+        if ($abiertos === 0) {
+            $cerrados = [];
+            for ($i = 0; $i < $days; $i++) {
+                $d = $start->copy()->addDays($i);
+                $cerrados[] = ucfirst($d->locale('es')->isoFormat('dddd D [de] MMMM')).': cerrado.';
+            }
+
+            return "El consultorio no atiende ninguno de esos días:\n".implode("\n", $cerrados)
+                ."\nOfrécele otra fecha; NO le ofrezcas horas de estos días.";
+        }
+
         // Una sola llamada a freeBusy para todo el rango.
         $rangeEnd = $start->copy()->addDays($days - 1)->endOfDay();
         $busyRaw = GoogleCalendarService::fromConfig()->busyTimes(
@@ -731,6 +754,16 @@ class BotService
             $window = $hours[$day->dayOfWeek] ?? null;
 
             $label = ucfirst($day->locale('es')->isoFormat('dddd D [de] MMMM'));
+
+            // Día cerrado a mano (festivo, vacaciones, un puente). Se comprueba
+            // ANTES del horario semanal: da igual que sea un martes normal, ese
+            // día no se atiende. El motivo NO se le cuenta a la paciente —a
+            // nadie le importa por qué— y decirlo solo invita a negociar.
+            if (Settings::isClosedOn($day)) {
+                $lines[] = "{$label}: cerrado.";
+
+                continue;
+            }
 
             if (! $window) {
                 $lines[] = "{$label}: cerrado.";
@@ -832,6 +865,17 @@ class BotService
     {
         $hora = $start->format('h:i a');
         $dia = $start->copy()->startOfDay();
+
+        // Un día cerrado a mano tiene que bloquearse TAMBIÉN aquí, no solo al
+        // ofrecer horarios: esta comprobación existe precisamente porque la
+        // paciente puede pedir una hora que nunca se le ofreció («¿y el 25?»).
+        // Sin esto, Lore le cobraría la valoración y agendaría en un día que la
+        // doctora marcó como cerrado.
+        if (Settings::isClosedOn($dia)) {
+            $fecha = $start->locale('es')->isoFormat('dddd D [de] MMMM');
+
+            return "ERROR: el consultorio no atiende el {$fecha}. No agendes ahí; ofrécele otro día.";
+        }
 
         $atencion = $this->ventanaDelDia(Settings::scheduleHours(), $dia);
         if (! $atencion) {

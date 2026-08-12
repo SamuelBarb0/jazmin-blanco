@@ -27,6 +27,11 @@ const sidebarNavItems: NavItem[] = [
         icon: null,
     },
     {
+        title: 'Días sin atención',
+        url: '/settings/agenda',
+        icon: null,
+    },
+    {
         title: 'Pagos',
         url: '/settings/pagos',
         icon: null,

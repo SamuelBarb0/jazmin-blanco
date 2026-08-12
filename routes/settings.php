@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Settings\AgendaController;
 use App\Http\Controllers\Settings\AiSettingsController;
 use App\Http\Controllers\Settings\EquipoController;
 use App\Http\Controllers\Settings\GoogleCalendarSettingsController;
@@ -21,6 +22,13 @@ Route::middleware('auth')->group(function () {
 
     // Equipo de la clínica: quién más puede entrar. Solo la dueña (validado
     // en el controlador, como el resto de ajustes sensibles).
+    // Días en que el consultorio no atiende. La fecha va en la URL y no en el
+    // cuerpo porque es el identificador del recurso, y así el borrado es
+    // idempotente: repetirlo no rompe nada.
+    Route::get('settings/agenda', [AgendaController::class, 'index'])->name('agenda.index');
+    Route::post('settings/agenda', [AgendaController::class, 'store'])->name('agenda.store');
+    Route::delete('settings/agenda/{fecha}', [AgendaController::class, 'destroy'])->name('agenda.destroy');
+
     Route::get('settings/equipo', [EquipoController::class, 'index'])->name('equipo.index');
     Route::post('settings/equipo', [EquipoController::class, 'store'])->name('equipo.store');
     Route::patch('settings/equipo/{miembro}', [EquipoController::class, 'toggle'])->name('equipo.toggle');

@@ -659,4 +659,95 @@ class Settings
     {
         return (int) (self::get('schedule_slot_minutes') ?: 30);
     }
+
+    /**
+     * Días sueltos en los que el consultorio NO atiende: festivos, vacaciones,
+     * un congreso, un puente.
+     *
+     * Es distinto de `scheduleHours()`, que cierra días de la SEMANA (el
+     * domingo, siempre). Aquí van fechas concretas, y por eso se guardan como
+     * un mapa `Y-m-d => motivo`: la clave da la búsqueda directa y quita los
+     * duplicados sola, y el motivo es para que la clínica entienda su propia
+     * lista dentro de seis meses. A la paciente no se le cuenta el motivo.
+     *
+     * @return array<string,string>  '2026-12-25' => 'Navidad'
+     */
+    public static function closedDays(): array
+    {
+        $stored = self::get('schedule_closed_days');
+
+        if (blank($stored)) {
+            return [];
+        }
+
+        $decoded = json_decode($stored, true);
+
+        if (! is_array($decoded)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($decoded as $fecha => $motivo) {
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $fecha)) {
+                $out[(string) $fecha] = (string) $motivo;
+            }
+        }
+
+        ksort($out);
+
+        return $out;
+    }
+
+    /**
+     * @param  array<string,string>  $days  'Y-m-d' => motivo
+     */
+    public static function setClosedDays(array $days): void
+    {
+        $limpio = [];
+        $hoy = now()->format('Y-m-d');
+
+        foreach ($days as $fecha => $motivo) {
+            $fecha = trim((string) $fecha);
+
+            if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha)) {
+                continue;
+            }
+
+            // Las fechas ya pasadas se descartan al guardar: cerrar un día que
+            // ya ocurrió no cambia nada y la lista crecería para siempre.
+            if ($fecha < $hoy) {
+                continue;
+            }
+
+            $limpio[$fecha] = mb_substr(trim((string) $motivo), 0, 120);
+        }
+
+        ksort($limpio);
+
+        self::put('schedule_closed_days', json_encode($limpio, JSON_UNESCAPED_UNICODE));
+    }
+
+    /** ¿El consultorio está cerrado ese día concreto? */
+    public static function isClosedOn(mixed $date): bool
+    {
+        return array_key_exists(self::asDay($date), self::closedDays());
+    }
+
+    /** El motivo del cierre, si lo hay. Uso interno: no se le dice a la paciente. */
+    public static function closedReason(mixed $date): ?string
+    {
+        $motivo = self::closedDays()[self::asDay($date)] ?? null;
+
+        return blank($motivo) ? null : $motivo;
+    }
+
+    /** Acepta un Carbon, un DateTime o una cadena, y devuelve 'Y-m-d'. */
+    private static function asDay(mixed $date): string
+    {
+        if ($date instanceof \DateTimeInterface) {
+            return $date->format('Y-m-d');
+        }
+
+        return substr((string) $date, 0, 10);
+    }
 }
