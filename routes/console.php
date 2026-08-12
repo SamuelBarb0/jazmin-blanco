@@ -45,6 +45,22 @@ Schedule::command('payments:check-pending')
     ->withoutOverlapping();
 
 /*
+ * Reactivación de quien preguntó y nunca agendó.
+ *
+ * Cada hora, por la misma razón que los recordatorios: el umbral se mide contra
+ * "ahora", así que una corrida perdida la recupera la siguiente. La franja
+ * decente (8-20, hora del consultorio) y el tope por corrida los aplica el
+ * propio comando.
+ *
+ * Nace APAGADO (`reactivation_enabled` = 0). Encenderlo suelta el primer lote
+ * sobre todo el histórico frío, así que quien lo encienda debería mirar antes
+ * un `--dry-run`.
+ */
+Schedule::command('conversations:send-reactivation')
+    ->hourly()
+    ->withoutOverlapping();
+
+/*
  * Resumen diario del estado del sistema.
  *
  * A las 7 de la mañana, antes de que abra el consultorio: si algo se rompió de

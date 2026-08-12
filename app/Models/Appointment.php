@@ -69,21 +69,10 @@ class Appointment extends Model
      */
     public function telefonoWhatsapp(?string $codigoPais = null): ?string
     {
-        $digitos = preg_replace('/\D/', '', (string) ($this->patient_phone ?: $this->lead?->phone));
-
-        if (strlen($digitos) < 10) {
-            return null;
-        }
-
-        // Más de 10 dígitos = ya trae indicativo (57…, 1…, 34…); se respeta.
-        if (strlen($digitos) > 10) {
-            return $digitos;
-        }
-
-        // El indicativo vive en reminderConfig, NO en botConfig: `botConfig()`
-        // no tiene esa clave y devolvía null, o sea prefijo vacío y el número
-        // igual de roto que antes. Lo cazó la prueba.
-        return ($codigoPais ?: Settings::reminderConfig()['country_code']).$digitos;
+        // La regla en sí vive en Settings desde que el mensaje de reactivación
+        // necesitó exactamente la misma sobre el teléfono del LEAD: tenerla dos
+        // veces es la forma conocida de que una de las dos se quede sin arreglar.
+        return Settings::phoneWithCountryCode($this->patient_phone ?: $this->lead?->phone, $codigoPais);
     }
 
     public function user(): BelongsTo

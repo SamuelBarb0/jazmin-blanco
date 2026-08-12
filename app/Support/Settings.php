@@ -510,6 +510,84 @@ class Settings
     }
 
     /**
+     * Un teléfono en el formato que exige WhatsApp (con indicativo), o null si
+     * no hay uno utilizable.
+     *
+     * Meta EXIGE el indicativo de país. Un móvil colombiano de 10 dígitos
+     * enviado tal cual se acepta con un 200 y rebota después con
+     * `131026 Message undeliverable`: el fallo no se ve al enviar, solo aparece
+     * más tarde en `delivery_failures`. En producción, 67 de los 82 teléfonos
+     * están guardados sin el 57.
+     *
+     * El indicativo vive en `reminderConfig()`, NO en `botConfig()` — esa clave
+     * no existe ahí y devolvía null, o sea prefijo vacío y el número igual de
+     * roto que antes.
+     */
+    public static function phoneWithCountryCode(?string $raw, ?string $codigoPais = null): ?string
+    {
+        $digitos = preg_replace('/\D/', '', (string) $raw);
+
+        if (strlen($digitos) < 10) {
+            return null;
+        }
+
+        // Más de 10 dígitos = ya trae indicativo (57…, 1…, 34…); se respeta.
+        if (strlen($digitos) > 10) {
+            return $digitos;
+        }
+
+        return ($codigoPais ?: self::reminderConfig()['country_code']).$digitos;
+    }
+
+    /**
+     * Mensaje de reactivación para quien preguntó y nunca agendó.
+     *
+     * `hours` es el silencio que tiene que acumular la paciente antes de que se
+     * le escriba. Está en HORAS y no en días porque la doctora lo quiso corto
+     * (24-48 h), y a esa escala "1 día" y "2 días" son decisiones distintas.
+     *
+     * `max_per_run` es el freno importante: la marca de enviado nace vacía, así
+     * que la PRIMERA corrida ve como pendientes todas las conversaciones frías
+     * del histórico. Sin tope, encender esto le manda una promoción de golpe a
+     * decenas de personas que llevan meses sin escribir — la mejor forma de que
+     * reporten el número y Meta baje la calidad de la línea. Con tope, el atasco
+     * se reparte a lo largo de las horas siguientes.
+     *
+     * @return array{enabled:bool,hours:int,template:string,language:string,max_per_run:int}
+     */
+    public static function reactivationConfig(): array
+    {
+        return [
+            'enabled' => self::get('reactivation_enabled', '0') === '1',
+            'hours' => max(1, (int) (self::get('reactivation_hours') ?: 48)),
+            'template' => self::get('reactivation_template') ?: 'reactivacion_lead',
+            'language' => self::get('reactivation_language') ?: 'es',
+            'max_per_run' => max(1, (int) (self::get('reactivation_max_per_run') ?: 20)),
+        ];
+    }
+
+    /**
+     * @param  array<string,mixed>  $config
+     */
+    public static function setReactivationConfig(array $config): void
+    {
+        if (array_key_exists('enabled', $config)) {
+            self::put('reactivation_enabled', $config['enabled'] ? '1' : '0');
+        }
+
+        foreach ([
+            'hours' => 'reactivation_hours',
+            'template' => 'reactivation_template',
+            'language' => 'reactivation_language',
+            'max_per_run' => 'reactivation_max_per_run',
+        ] as $campo => $key) {
+            if (array_key_exists($campo, $config)) {
+                self::put($key, $config[$campo] === null ? null : (string) $config[$campo]);
+            }
+        }
+    }
+
+    /**
      * @param  array<string,mixed>  $config
      */
     public static function setReminderConfig(array $config): void
