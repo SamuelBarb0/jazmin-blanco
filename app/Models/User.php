@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -129,6 +130,36 @@ class User extends Authenticatable
     public function knowledgeEntries(): HasMany
     {
         return $this->hasMany(KnowledgeEntry::class, 'user_id', 'cuenta_id');
+    }
+
+    /**
+     * Un usuario por CUENTA, para los procesos automáticos.
+     *
+     * Los datos no cuelgan de `users.id` sino de `users.cuenta_id`: todos los
+     * usuarios de una clínica ven exactamente las mismas conversaciones y
+     * citas. Los comandos programados iteraban `User::all()`, así que con dos
+     * logins en la misma cuenta —la doctora y su asistente— cada corrida
+     * procesaba la misma clínica DOS VECES. No llegaba a duplicar mensajes
+     * porque cada envío deja su marca (`reminder_24h_sent_at`,
+     * `reactivation_sent_at`, `payment_links.appointment_id`) antes de la
+     * segunda pasada, pero duplicaba el trabajo, inflaba los contadores del
+     * resumen y, si un envío fallaba en la primera pasada, la segunda lo
+     * reintentaba en la misma corrida. Con un tercer login se triplicaba.
+     *
+     * Se prefiere el propietario activo; si no hay, cualquiera de la cuenta:
+     * lo automático pertenece a la clínica, no al login.
+     *
+     * @return Collection<int,User>
+     */
+    public static function unoPorCuenta(): Collection
+    {
+        return static::query()
+            ->orderByDesc('activo')
+            ->orderByDesc('es_propietario')
+            ->orderBy('id')
+            ->get()
+            ->unique('cuenta_id')
+            ->values();
     }
 
     /** @return HasMany<Conversation, $this> */

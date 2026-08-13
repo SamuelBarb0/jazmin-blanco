@@ -273,8 +273,9 @@ class CheckPendingPayments extends Command
     {
         $ref = $this->option('user');
 
+        // Uno por cuenta, no todos los logins: ver `User::unoPorCuenta()`.
         if (blank($ref)) {
-            return User::query()->cursor();
+            return User::unoPorCuenta();
         }
 
         return User::where('id', $ref)->orWhere('email', $ref)->get();

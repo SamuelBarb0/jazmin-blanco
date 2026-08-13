@@ -340,8 +340,9 @@ class SendAppointmentReminders extends Command
     {
         $ref = $this->option('user');
 
+        // Uno por cuenta, no todos los logins: ver `User::unoPorCuenta()`.
         if (blank($ref)) {
-            return User::all();
+            return User::unoPorCuenta();
         }
 
         return User::query()
