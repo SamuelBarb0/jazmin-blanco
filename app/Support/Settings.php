@@ -582,6 +582,32 @@ class Settings
     }
 
     /**
+     * Etapas del pipeline cuyos leads NO deben recibir reactivación, en
+     * minúsculas y sin tildes.
+     *
+     * La exclusión por «ya tiene cita» solo ve la tabla de citas. Si la doctora
+     * arrastra a alguien a «Agendado» o «Cerrado» en el Kanban sin que llegue a
+     * existir la cita —o lo marca «Perdido» a propósito— seguía entrando en la
+     * cola y recibía un «¿aún podemos ayudarte?» que no venía a cuento. Pasa
+     * justo con quien escribe preguntando por algo de una cita anterior.
+     *
+     * @return array<int,string>
+     */
+    public static function reactivationExcludedStages(): array
+    {
+        $raw = (string) (self::get('reactivation_excluded_stages') ?: 'agendado,en valoracion,cerrado,perdido');
+
+        return collect(preg_split('/[,;\n]+/', $raw))
+            ->map(fn ($s) => trim(strtr(mb_strtolower((string) $s), [
+                'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u',
+            ])))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
      * @param  array<string,mixed>  $config
      */
     public static function setReactivationConfig(array $config): void

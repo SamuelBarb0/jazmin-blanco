@@ -73,6 +73,9 @@ class SendReactivationMessages extends Command
      */
     private array $ultimoInbound = [];
 
+    /** Descartadas por estar en una etapa del pipeline excluida. */
+    private int $porEtapa = 0;
+
     public function handle(): int
     {
         $dry = (bool) $this->option('dry-run');
@@ -199,6 +202,7 @@ class SendReactivationMessages extends Command
 
         $this->info(($dry ? 'Simulación · ' : '')
             ."Reactivaciones: {$enviados} · fallidas: {$fallidos} · sin teléfono: {$sinTelefono} · excluidas: {$excluidos}"
+            ." · fuera por etapa: {$this->porEtapa}"
             ." · umbral: {$config['hours']}h · tope: {$tope}".$desde);
 
         if ($restantes > 0) {
@@ -235,7 +239,7 @@ class SendReactivationMessages extends Command
             // haber 53 de playground contra 41 reales.
             ->where('channel', 'whatsapp')
             ->whereNotNull('lead_id')
-            ->with('lead:id,name,phone')
+            ->with('lead:id,name,phone,stage_id', 'lead.stage:id,name')
             ->get();
 
         if ($conversaciones->isEmpty()) {
@@ -253,9 +257,26 @@ class SendReactivationMessages extends Command
             ->map(fn ($fecha) => Carbon::parse($fecha))
             ->all();
 
+        $etapasFuera = Settings::reactivationExcludedStages();
+
         return $conversaciones
             // Nunca agendó nada: es la condición que pidió la doctora.
             ->reject(fn (Conversation $c) => in_array($c->lead_id, $conAgenda, true))
+            // Segunda red por la ETAPA del pipeline. La de arriba solo ve la
+            // tabla de citas; esta atrapa a quien la doctora movió a mano a
+            // «Agendado»/«Cerrado» sin que la cita llegara a existir, que es
+            // típicamente quien escribe por algo de una cita anterior.
+            ->reject(function (Conversation $c) use ($etapasFuera) {
+                if (! in_array($this->etapaNormalizada($c), $etapasFuera, true)) {
+                    return false;
+                }
+
+                // Se cuenta para que salga en el resumen: un descarte silencioso
+                // se lee como «no había a quién escribirle».
+                $this->porEtapa++;
+
+                return true;
+            })
             ->filter(function (Conversation $c) use ($limite, $desde) {
                 $ultimo = $this->ultimoInbound[$c->id] ?? null;
 
@@ -273,6 +294,19 @@ class SendReactivationMessages extends Command
             // quién entra hoy.
             ->sortByDesc(fn (Conversation $c) => $this->ultimoInbound[$c->id])
             ->values();
+    }
+
+    /**
+     * Nombre de la etapa del lead en minúsculas y sin tildes, para comparar con
+     * la lista de exclusión. Cadena vacía si no tiene etapa.
+     */
+    private function etapaNormalizada(Conversation $c): string
+    {
+        $nombre = (string) ($c->lead?->stage?->name ?? '');
+
+        return trim(strtr(mb_strtolower($nombre), [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u',
+        ]));
     }
 
     /**
