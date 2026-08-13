@@ -228,11 +228,26 @@ class BotService
         $datos = $this->datosPagoPorAnexar;
         $this->datosPagoPorAnexar = null;
 
-        // Basta con mirar si ya aparece alguno de los números largos: si el
-        // modelo los copió, el texto los contiene tal cual.
+        // Tienen que estar TODOS los números largos, no basta con uno.
+        //
+        // Antes valía con encontrar uno solo: se asumía que si el modelo había
+        // copiado algo, lo había copiado todo. Con una sola cuenta y el Nequi
+        // colaba; desde que la clínica tiene Davivienda, Bancolombia y Nequi
+        // (13/08/2026), que el modelo escriba únicamente el Nequi y se salte
+        // las dos cuentas es un desenlace perfectamente posible — y el código
+        // lo habría dado por bueno, dejando a la paciente con el cupo apartado
+        // y sin saber a qué cuenta transferir.
+        //
+        // Si falta alguno se anexa el bloque entero, aun a riesgo de repetir un
+        // número que el modelo ya había escrito: en dinero, repetir es un
+        // defecto de estilo y faltar es que la paciente no pueda pagar.
         preg_match_all('/\d{7,}/', $datos, $numeros);
-        foreach ($numeros[0] as $numero) {
-            if (str_contains($text, $numero)) {
+        $numerosUnicos = array_unique($numeros[0]);
+
+        if ($numerosUnicos !== []) {
+            $faltantes = array_filter($numerosUnicos, fn (string $n) => ! str_contains($text, $n));
+
+            if ($faltantes === []) {
                 return $text;
             }
         }
