@@ -257,6 +257,21 @@ class SendReactivationMessages extends Command
             ->map(fn ($fecha) => Carbon::parse($fecha))
             ->all();
 
+        // El último mensaje de CUALQUIERA de los dos. Normalmente cae en el
+        // mismo minuto que el de la paciente —Lore contesta al instante—, así
+        // que casi nunca cambia nada. Importa en el caso en que SÍ cambia: si
+        // la doctora le escribió a mano hace un rato, mandarle encima un «hace
+        // un tiempo recibimos tu interés» es exactamente el mensaje que no
+        // toca. Antes solo se miraba el inbound, así que escribirle no
+        // aplazaba nada.
+        $ultimoCualquiera = Message::query()
+            ->whereIn('conversation_id', $conversaciones->modelKeys())
+            ->groupBy('conversation_id')
+            ->selectRaw('conversation_id, MAX(created_at) as ultimo')
+            ->pluck('ultimo', 'conversation_id')
+            ->map(fn ($fecha) => Carbon::parse($fecha))
+            ->all();
+
         $etapasFuera = Settings::reactivationExcludedStages();
 
         return $conversaciones
@@ -277,12 +292,18 @@ class SendReactivationMessages extends Command
 
                 return true;
             })
-            ->filter(function (Conversation $c) use ($limite, $desde) {
+            ->filter(function (Conversation $c) use ($limite, $desde, $ultimoCualquiera) {
                 $ultimo = $this->ultimoInbound[$c->id] ?? null;
 
                 // Sin ningún mensaje SUYO no hay interés que reactivar: puede
                 // ser una conversación creada por el CRM al agendar o importar.
                 if ($ultimo === null || ! $ultimo->lt($limite)) {
+                    return false;
+                }
+
+                // Y que tampoco le hayamos escrito NOSOTROS hace poco.
+                $charla = $ultimoCualquiera[$c->id] ?? $ultimo;
+                if (! $charla->lt($limite)) {
                     return false;
                 }
 
