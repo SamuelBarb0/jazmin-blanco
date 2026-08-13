@@ -26,11 +26,15 @@ class BotService
     /**
      * Cuánto se supone que dura una cita cuando el servicio no lo dice.
      *
-     * Vive aquí como constante porque la usan DOS sitios que tienen que estar
-     * de acuerdo: el cálculo de horarios libres y el de agendar. Cuando no lo
-     * estaban, se ofrecían huecos donde la cita no cabía.
+     * Tiene que estar de acuerdo en TRES sitios —ofrecer horarios, apartar el
+     * hueco mientras paga y agendar—; cuando no lo estaban se ofrecían huecos
+     * donde la cita no cabía. Vive en `Settings` y no como constante para que
+     * la clínica pueda cambiarla sin tocar código.
      */
-    private const DURACION_POR_DEFECTO = 45;
+    private function duracionPorDefecto(): int
+    {
+        return Settings::defaultAppointmentMinutes();
+    }
 
     /**
      * Conversación que se está atendiendo. La guardamos para que al agendar se
@@ -513,7 +517,7 @@ class BotService
                         'correo' => ['type' => 'string', 'description' => 'Correo, si lo tienes.'],
                         'servicio' => ['type' => 'string', 'description' => 'Nombre del servicio o motivo de la cita, si aplica.'],
                         'fecha_hora' => ['type' => 'string', 'description' => 'Fecha y hora de inicio en formato YYYY-MM-DDTHH:MM (hora local de la clínica).'],
-                        'duracion_minutos' => ['type' => 'integer', 'description' => 'Duración en minutos. Si se omite, se usa la del servicio o 45.'],
+                        'duracion_minutos' => ['type' => 'integer', 'description' => 'Duración en minutos. NO la inventes: omítela salvo que la doctora haya dicho expresamente cuánto dura ese procedimiento. Si se omite se usa la del servicio y, si el servicio no la trae, '.$this->duracionPorDefecto().' minutos, que es lo que dura una valoración.'],
                         'notas' => ['type' => 'string', 'description' => 'Notas u observaciones.'],
                         'pago_por_transferencia' => [
                             'type' => 'boolean',
@@ -540,7 +544,7 @@ class BotService
                         'servicio' => ['type' => 'string', 'description' => 'Tratamiento o motivo de la cita, tal como lo dijo la paciente.'],
                         'telefono' => ['type' => 'string', 'description' => 'Teléfono de contacto, si lo tienes.'],
                         'correo' => ['type' => 'string', 'description' => 'Correo, si lo tienes.'],
-                        'duracion_minutos' => ['type' => 'integer', 'description' => 'Duración en minutos. Si se omite, se usa la del servicio o 45.'],
+                        'duracion_minutos' => ['type' => 'integer', 'description' => 'Duración en minutos. NO la inventes: omítela salvo que la doctora haya dicho expresamente cuánto dura ese procedimiento. Si se omite se usa la del servicio y, si el servicio no la trae, '.$this->duracionPorDefecto().' minutos, que es lo que dura una valoración.'],
                     ],
                     'required' => [],
                 ],
@@ -703,7 +707,7 @@ class BotService
         // salían libres aunque a las 14:00 hubiera algo, pero la cita real de 45
         // min llegaba hasta las 14:15 y `createBooking` la rechazaba. La paciente
         // ya había PAGADO para entonces, así que el error se cobraba.
-        $duracion = max(15, (int) ($this->resolveService((string) ($input['servicio'] ?? ''))?->duration_minutes ?: self::DURACION_POR_DEFECTO));
+        $duracion = max(15, (int) ($this->resolveService((string) ($input['servicio'] ?? ''))?->duration_minutes ?: $this->duracionPorDefecto()));
 
         // Si NINGÚN día del rango se atiende —todos cerrados a mano o fuera del
         // horario semanal— no hay nada que preguntarle a Google: se sale antes
@@ -926,9 +930,9 @@ class BotService
         // determina cuánto tiempo queda apartado el hueco mientras paga. Sin
         // esto se apartarían 45 minutos para un procedimiento de 90 y alguien
         // podría meterse encima.
-        $duracion = (int) ($input['duracion_minutos'] ?? 0)
+        $duracion = max(15, (int) ($input['duracion_minutos'] ?? 0)
             ?: ($this->resolveService($servicioPedido)?->duration_minutes ?? 0)
-            ?: 45;
+            ?: $this->duracionPorDefecto());
 
         $reserva = array_filter([
             'fecha_hora' => trim((string) ($input['fecha_hora'] ?? '')) ?: null,
@@ -1127,7 +1131,12 @@ class BotService
         $requested = trim((string) ($input['servicio'] ?? ''));
         $service = $this->resolveService($requested);
 
-        $duration = (int) ($input['duracion_minutos'] ?? $service?->duration_minutes ?: self::DURACION_POR_DEFECTO);
+        // Un 0 explícito del modelo cuenta como «no lo sé», igual que en
+        // `toolBook`: antes se colaba tal cual y creaba una cita de duración
+        // cero, que en Google no bloquea nada y deja el hueco vendible.
+        $duration = max(15, (int) ($input['duracion_minutos'] ?? 0)
+            ?: ($service?->duration_minutes ?? 0)
+            ?: $this->duracionPorDefecto());
         $end = $start->copy()->addMinutes($duration);
 
         // Primero la agenda de la doctora: día cerrado, fuera de jornada o en

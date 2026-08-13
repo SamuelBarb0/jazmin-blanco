@@ -755,11 +755,28 @@ class Settings
     }
 
     /**
+     * Cuánto dura una cita agendada por el bot cuando el servicio no lo dice.
+     *
+     * Son 60 porque la valoración —que es lo que agenda el bot— dura una hora.
+     * Las citas de 30 minutos que hay en la agenda las mete la doctora a mano;
+     * la plataforma nunca debe agendar menos de esto por su cuenta.
+     */
+    public static function defaultAppointmentMinutes(): int
+    {
+        return max(15, (int) (self::get('default_appointment_minutes') ?: 60));
+    }
+
+    /**
      * Granularidad de los turnos en minutos (cada cuánto se ofrece un horario).
+     *
+     * Por defecto va pegada a la duración de la cita: ofrecer huecos cada 30
+     * minutos para una valoración de 60 partía la agenda en dos —reservar las
+     * 9:30 dejaba muerta la media hora anterior— y la doctora veía
+     * «disponibilidad cada 30 minutos» para algo que le ocupa una hora.
      */
     public static function scheduleSlotMinutes(): int
     {
-        return (int) (self::get('schedule_slot_minutes') ?: 30);
+        return (int) (self::get('schedule_slot_minutes') ?: self::defaultAppointmentMinutes());
     }
 
     /**

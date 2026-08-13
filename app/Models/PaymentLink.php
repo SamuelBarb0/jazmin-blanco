@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\Settings;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -93,7 +94,7 @@ class PaymentLink extends Model
                 }
 
                 $inicio = Carbon::parse($cuando, $tz);
-                $minutos = (int) ($link->booking['duracion_minutos'] ?? 0) ?: 45;
+                $minutos = (int) ($link->booking['duracion_minutos'] ?? 0) ?: Settings::defaultAppointmentMinutes();
 
                 return ['start' => $inicio, 'end' => $inicio->copy()->addMinutes($minutos)];
             })

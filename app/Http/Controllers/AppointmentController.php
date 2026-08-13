@@ -429,12 +429,14 @@ class AppointmentController extends Controller
     {
         $starts = Carbon::parse($data['starts_at']);
 
-        // Duración: la del servicio si no se especifica; por defecto 45 min.
+        // Duración: la escrita a mano manda, luego la del servicio y por último
+        // la de la clínica (`Settings`), la misma que usa el bot. Aquí casi
+        // siempre viene escrita: el formulario del panel la prellena.
         $duration = $data['duration_minutes'] ?? null;
         if (! $duration && ! empty($data['service_id'])) {
             $duration = $request->user()->services()->whereKey($data['service_id'])->value('duration_minutes');
         }
-        $duration = (int) ($duration ?: 45);
+        $duration = (int) ($duration ?: Settings::defaultAppointmentMinutes());
 
         // Toda cita debe tener a su paciente en el pipeline: si no se eligió un
         // lead, se busca por teléfono/nombre y se crea si es la primera vez.
