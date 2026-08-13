@@ -755,6 +755,19 @@ class Settings
     }
 
     /**
+     * Dominio del sitio web de la clínica, sin protocolo ni barra final.
+     *
+     * Se usa para reconocer de qué página llegó la paciente: el botón de
+     * WhatsApp de la web prellena el mensaje con la URL que estaba viendo.
+     */
+    public static function websiteDomain(): string
+    {
+        $raw = (string) (self::get('website_domain') ?: 'drajasminblanco.com');
+
+        return trim(preg_replace('#^https?://(www\.)?#i', '', $raw), " \t\n\r\0\x0B/");
+    }
+
+    /**
      * Cuánto dura una cita agendada por el bot cuando el servicio no lo dice.
      *
      * Son 60 porque la valoración —que es lo que agenda el bot— dura una hora.

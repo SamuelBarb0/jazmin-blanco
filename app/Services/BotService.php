@@ -44,6 +44,15 @@ class BotService
     private ?Conversation $conversation = null;
 
     /**
+     * Caché de `paginaDeOrigen()`. `false` = todavía no se calculó; `null` = se
+     * calculó y no venía de la web. El prompt se arma en cada turno y el primer
+     * mensaje de la conversación no cambia, así que se resuelve una sola vez.
+     *
+     * @var array{url:string, slug:string, service:?Service}|null|false
+     */
+    private array|null|false $paginaDeOrigen = false;
+
+    /**
      * Datos de transferencia que hay que anexar a la respuesta porque se acaba
      * de apartar una cita por ese medio. Ver `conDatosDePago()`.
      */
@@ -1262,6 +1271,23 @@ class BotService
      * el paciente. Es tolerante: admite frases ("quiero botox para la frente"),
      * nombres comerciales y busca también en la descripción/contexto del servicio.
      */
+    /**
+     * Quita tildes y diéresis para poder comparar.
+     *
+     * El catálogo está escrito con la ortografía correcta («Depilación Láser
+     * Diodo») y de fuera llega casi siempre sin tildes: los slugs de la web
+     * («/servicios/depilacion-laser-diodo/») y lo que la paciente teclea en el
+     * chat. Sin esto «depilacion laser diodo» no reconocía su propio servicio y
+     * el puntaje se lo llevaba cualquier otro que tuviera una palabra suelta.
+     */
+    private static function sinTildes(string $texto): string
+    {
+        return strtr($texto, [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u',
+            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U', 'Ü' => 'U',
+        ]);
+    }
+
     private function resolveService(?string $query): ?Service
     {
         $query = trim((string) $query);
@@ -1274,11 +1300,11 @@ class BotService
             return null;
         }
 
-        $q = Str::lower($query);
+        $q = self::sinTildes(Str::lower($query));
 
         // 1) Coincidencia directa: el nombre contiene la frase, o la frase el nombre.
         foreach ($services as $s) {
-            $name = Str::lower($s->name);
+            $name = self::sinTildes(Str::lower($s->name));
             if (Str::contains($name, $q) || Str::contains($q, $name)) {
                 return $s;
             }
@@ -1291,7 +1317,7 @@ class BotService
             'una', 'algo', 'sobre', 'zona', 'aplicar', 'aplicacion', 'aplicación'];
 
         $words = collect(preg_split('/\s+/', $q))
-            ->map(fn ($w) => preg_replace('/[^a-záéíóúñ0-9]/u', '', (string) $w))
+            ->map(fn ($w) => preg_replace('/[^a-zñ0-9]/u', '', (string) $w))
             ->filter(fn ($w) => strlen((string) $w) >= 4 && ! in_array($w, $stop, true))
             ->unique()
             ->values();
@@ -1303,8 +1329,8 @@ class BotService
         $best = null;
         $bestScore = 0;
         foreach ($services as $s) {
-            $name = Str::lower($s->name);
-            $haystack = Str::lower($s->name.' '.$s->short_description.' '.$s->ai_context);
+            $name = self::sinTildes(Str::lower($s->name));
+            $haystack = self::sinTildes(Str::lower($s->name.' '.$s->short_description.' '.$s->ai_context));
 
             $nameHits = $words->filter(fn ($w) => Str::contains($name, $w))->count();
             $textHits = $words->filter(fn ($w) => Str::contains($haystack, $w))->count();
@@ -1482,6 +1508,71 @@ class BotService
     }
 
     /**
+     * Página del sitio web desde la que escribió la paciente, con el servicio
+     * que le corresponde si se puede reconocer.
+     *
+     * El botón de WhatsApp de la web prellena el mensaje con la URL de la
+     * página que estaba viendo: «¡Hola! Vi en Google
+     * https://drajasminblanco.com/servicios/implante-capilar-en-bogota/ y
+     * quiero más información». Ahí viene escrito a qué vino.
+     *
+     * Meta NO manda `referral` en este caso —eso es exclusivo de los anuncios
+     * Click-to-WhatsApp—, así que hasta ahora el dato se perdía: el bot abría
+     * con «¿sobre qué tratamiento te gustaría saber?» a alguien que ya lo
+     * había dicho, y esas conversaciones se caían ahí mismo.
+     *
+     * @return array{url:string, slug:string, service:?Service}|null
+     */
+    private function paginaDeOrigen(): ?array
+    {
+        if ($this->paginaDeOrigen !== false) {
+            return $this->paginaDeOrigen;
+        }
+
+        $this->paginaDeOrigen = null;
+
+        // El primero SUYO: la URL viaja en el mensaje prellenado con el que se
+        // abre el chat, no en lo que conteste después.
+        $primero = $this->conversation?->messages()
+            ->where('role', 'user')
+            ->orderBy('id')
+            ->value('content');
+
+        if (blank($primero)) {
+            return null;
+        }
+
+        $dominio = preg_quote(Settings::websiteDomain(), '#');
+
+        // El protocolo es opcional a propósito: hoy la web lo prellena con
+        // `https://`, pero un «vi en www.dominio.com/x» pegado a mano trae la
+        // misma información y no hay motivo para tirarla.
+        if (! preg_match('#(?:https?://)?(?:www\.)?'.$dominio.'(/[^\s<>"\']*)?#i', (string) $primero, $m)) {
+            return null;
+        }
+
+        // De «/servicios/implante-capilar-en-bogota/» sale «implante capilar en
+        // bogota», que es justo lo que `resolveService()` sabe puntuar. Se
+        // ignoran los segmentos genéricos del camino («servicios», «blog») para
+        // que no compitan con el nombre real del tratamiento.
+        $ruta = trim((string) ($m[1] ?? ''), '/');
+        $segmentos = array_values(array_filter(
+            explode('/', $ruta),
+            fn (string $s) => $s !== '' && ! in_array(Str::lower($s), ['servicios', 'servicio', 'tratamientos', 'tratamiento', 'blog', 'es'], true),
+        ));
+
+        $slug = $segmentos === [] ? '' : str_replace('-', ' ', Str::lower(end($segmentos)));
+
+        $this->paginaDeOrigen = [
+            'url' => $m[0],
+            'slug' => $slug,
+            'service' => $slug === '' ? null : $this->resolveService($slug),
+        ];
+
+        return $this->paginaDeOrigen;
+    }
+
+    /**
      * Contexto de la campaña de Meta de la que viene el paciente, para que el bot
      * responda enfocado en el servicio y la oferta de ese anuncio.
      */
@@ -1499,11 +1590,33 @@ class BotService
         $anuncio = trim((string) ($referral['body'] ?? ''));
         $titular = trim((string) ($referral['headline'] ?? ''));
 
-        if (! $campaign && $anuncio === '') {
+        $web = $this->paginaDeOrigen();
+
+        if (! $campaign && $anuncio === '' && ! $web) {
             return '';
         }
 
         $lines = ['# De dónde viene este paciente'];
+
+        // Quien llega del sitio web no trae `referral` —eso solo lo manda Meta
+        // en los anuncios Click-to-WhatsApp—, pero sí trae la URL de la página
+        // que estaba leyendo dentro del propio mensaje. Solo se usa cuando NO
+        // hubo anuncio: si vino de uno, el texto del anuncio es mejor contexto.
+        if ($web && $anuncio === '') {
+            if ($web['service']) {
+                $lines[] = "Escribió desde la página de «{$web['service']->name}» del sitio web, casi siempre tras buscar en Google. "
+                    .'Da por hecho que viene por ESE tratamiento: háblale de él de entrada —en qué consiste, qué resuelve, cómo es el proceso— '
+                    .'en vez de preguntarle en qué puedes ayudarle. Preguntárselo a alguien que ya dijo a qué venía es justo lo que hace que se caiga la conversación.';
+            } elseif ($web['slug'] !== '') {
+                $lines[] = "Escribió desde la página «{$web['slug']}» del sitio web, casi siempre tras buscar en Google. "
+                    .'Ese es el tema que le interesa: entra por ahí en vez de preguntarle en qué puedes ayudarle.';
+            } else {
+                $lines[] = 'Escribió desde la portada del sitio web, sin entrar a ningún tratamiento concreto. '
+                    .'Ahí sí toca preguntarle qué busca, pero con una sola pregunta corta y cálida.';
+            }
+
+            $lines[] = 'NO menciones la página ni des a entender que sabes lo que estaba viendo. Que se note en que aciertas con el tema, no en que lo dices.';
+        }
 
         if ($anuncio !== '') {
             $lines[] = 'Escribió justo después de ver un anuncio del consultorio. Este es el texto que leyó'
