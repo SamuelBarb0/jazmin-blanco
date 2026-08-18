@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Support\PatientLeads;
 use App\Support\Settings;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
@@ -61,8 +62,7 @@ class BotService
     public function __construct(
         private readonly User $user,
         private readonly AnthropicService $ai,
-    ) {
-    }
+    ) {}
 
     public static function fromUser(User $user): self
     {
@@ -173,7 +173,7 @@ class BotService
     {
         return array_map(function ($block) {
             if (($block['type'] ?? '') === 'tool_use' && ($block['input'] ?? null) === []) {
-                $block['input'] = new \stdClass();
+                $block['input'] = new \stdClass;
             }
 
             return $block;
@@ -551,6 +551,31 @@ class BotService
                     'required' => ['nombre_paciente', 'fecha_hora'],
                 ],
             ],
+            [
+                'name' => 'reagendar_cita',
+                'description' => 'Mueve a otro día u hora una cita que la paciente YA tiene agendada. Úsala cuando pida cambiarla, moverla, correrla o adelantarla. NO vuelve a cobrar: la valoración que ya pagó se conserva y pasa a la fecha nueva. Comprueba antes con consultar_disponibilidad que la hora nueva esté libre.',
+                'input_schema' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'fecha_hora' => ['type' => 'string', 'description' => 'Nueva fecha y hora de inicio en formato YYYY-MM-DDTHH:MM (hora local de la clínica). La cita conserva la duración que ya tenía.'],
+                        'cita_id' => ['type' => 'integer', 'description' => 'Id de la cita que se va a mover. Solo hace falta cuando la paciente tiene varias citas próximas; en ese caso la herramienta te devuelve los ids para que le preguntes cuál. Es un número interno: NO se lo menciones a la paciente.'],
+                        'motivo' => ['type' => 'string', 'description' => 'Por qué la mueve, en pocas palabras, si lo dijo. Queda anotado en la cita para la doctora.'],
+                    ],
+                    'required' => ['fecha_hora'],
+                ],
+            ],
+            [
+                'name' => 'cancelar_cita',
+                'description' => 'Cancela una cita que la paciente YA tiene agendada: la retira de la agenda y del calendario de la doctora, y deja de enviarle recordatorios. Úsala SOLO cuando diga con claridad que no va a asistir y no quiera otra fecha; si solo quiere cambiar el día, usa reagendar_cita. Esta herramienta NO devuelve dinero: eso lo tramita una persona.',
+                'input_schema' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'cita_id' => ['type' => 'integer', 'description' => 'Id de la cita que se va a cancelar. Solo hace falta cuando la paciente tiene varias citas próximas; en ese caso la herramienta te devuelve los ids para que le preguntes cuál. Es un número interno: NO se lo menciones a la paciente.'],
+                        'motivo' => ['type' => 'string', 'description' => 'Por qué cancela, en pocas palabras, si lo dijo. Queda anotado en la cita para la doctora.'],
+                    ],
+                    'required' => [],
+                ],
+            ],
         ];
 
         // Con Mercado Pago conectado, el pago deja de ser una promesa: el bot genera
@@ -580,7 +605,7 @@ class BotService
                 // se serializa a `[]` y la API de Claude rechaza la petición
                 // entera con "input_schema.properties: Input should be an object",
                 // dejando al bot sin poder responder nada.
-                'input_schema' => ['type' => 'object', 'properties' => new \stdClass(), 'required' => []],
+                'input_schema' => ['type' => 'object', 'properties' => new \stdClass, 'required' => []],
             ];
         }
 
@@ -600,6 +625,8 @@ class BotService
                 'recordatorios_de_cita' => $this->toolReminders($input),
                 'consultar_disponibilidad' => $this->toolAvailability($input),
                 'agendar_cita' => $this->toolBook($input),
+                'reagendar_cita' => $this->toolReschedule($input),
+                'cancelar_cita' => $this->toolCancel($input),
                 'generar_link_pago' => $this->toolPaymentLink($input),
                 'verificar_pago' => $this->toolCheckPayment(),
                 default => 'Herramienta desconocida.',
@@ -931,6 +958,73 @@ class BotService
     }
 
     /**
+     * Motivo por el que el hueco NO está libre, o null si sí lo está.
+     *
+     * Vive aparte porque lo necesitan DOS caminos —agendar y reprogramar— y la
+     * regla de «no pisar a nadie» no puede estar escrita dos veces: la primera
+     * versión de esto ya se pagó cara cuando ofrecer horarios y agendar no
+     * usaban la misma duración.
+     *
+     * `$excepto` es la cita que se está moviendo. Su propio evento sigue en
+     * Google mientras se recalcula, así que sin esta excepción una paciente no
+     * podría correr su cita 15 minutos: se chocaría consigo misma. freeBusy no
+     * devuelve ids, así que se reconoce por el hueco exacto que ocupa.
+     */
+    private function motivoOcupado(Carbon $start, Carbon $end, ?Appointment $excepto = null): ?string
+    {
+        $tz = Settings::googleTimezone();
+
+        $busy = GoogleCalendarService::fromConfig()->busyTimes(
+            $start->copy()->startOfDay()->toRfc3339String(),
+            $start->copy()->endOfDay()->toRfc3339String(),
+        );
+
+        $suyo = $excepto
+            ? [
+                $this->enHoraLocal($excepto->starts_at, $tz)->format('Y-m-d H:i'),
+                $this->enHoraLocal($excepto->ends_at, $tz)->format('Y-m-d H:i'),
+            ]
+            : null;
+
+        foreach ($busy as $b) {
+            $bs = Carbon::parse($b['start'])->tz($tz);
+            $be = Carbon::parse($b['end'])->tz($tz);
+
+            if ($suyo && [$bs->format('Y-m-d H:i'), $be->format('Y-m-d H:i')] === $suyo) {
+                continue; // es la cita que estamos moviendo, no un estorbo
+            }
+
+            if ($start->lt($be) && $end->gt($bs)) {
+                return "ERROR: el horario de las {$start->format('h:i a')} ya está ocupado. No agendes ahí; ofrece otro horario libre.";
+            }
+        }
+
+        // Segunda red: el hueco puede estar apartado por otra paciente que está
+        // pagando ahora mismo y cuyo pago todavía no llegó, así que en Google
+        // aún no aparece nada.
+        foreach (PaymentLink::heldSlots($this->user->id, $tz, $this->conversation?->id) as $reserva) {
+            if ($start->lt($reserva['end']) && $end->gt($reserva['start'])) {
+                return "ERROR: el horario de las {$start->format('h:i a')} está apartado por otra paciente que tiene un pago en curso. No agendes ahí; ofrécele otro horario libre.";
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * La misma fecha, leída como hora de pared del consultorio.
+     *
+     * Las citas se guardan sin offset (ver `Appointment::serializeDate`), así
+     * que al releerlas Eloquent las etiqueta con la zona de la aplicación y no
+     * con la de la clínica. Compararlas así contra `now()` o contra lo que
+     * devuelve Google desplaza todo cinco horas sin que nada falle a la vista.
+     */
+    private function enHoraLocal(Carbon $fecha, string $tz): Carbon
+    {
+        return Carbon::parse($fecha->format('Y-m-d H:i:s'), $tz);
+    }
+
+    /**
      * Genera un link de pago propio de esta paciente. La `reference` lleva el id
      * de la conversación, que es lo que permite saber después quién pagó.
      *
@@ -1170,32 +1264,10 @@ class BotService
             return ['message' => $fueraDeHorario, 'appointment' => null];
         }
 
-        // Re-verifica que no se solape con algo ya ocupado.
-        $busy = GoogleCalendarService::fromConfig()->busyTimes(
-            $start->copy()->startOfDay()->toRfc3339String(),
-            $start->copy()->endOfDay()->toRfc3339String(),
-        );
-        foreach ($busy as $b) {
-            $bs = Carbon::parse($b['start']);
-            $be = Carbon::parse($b['end']);
-            if ($start->lt($be) && $end->gt($bs)) {
-                return [
-                    'message' => "ERROR: el horario de las {$start->format('h:i a')} ya está ocupado. No agendes ahí; ofrece otro horario libre.",
-                    'appointment' => null,
-                ];
-            }
-        }
-
-        // Segunda red: el hueco puede estar apartado por otra paciente que está
-        // pagando ahora mismo y cuyo pago todavía no llegó, así que en Google
-        // aún no aparece nada.
-        foreach (PaymentLink::heldSlots($this->user->id, $tz, $this->conversation?->id) as $reserva) {
-            if ($start->lt($reserva['end']) && $end->gt($reserva['start'])) {
-                return [
-                    'message' => "ERROR: el horario de las {$start->format('h:i a')} está apartado por otra paciente que tiene un pago en curso. No agendes ahí; ofrécele otro horario libre.",
-                    'appointment' => null,
-                ];
-            }
+        // Re-verifica que no se solape con algo ya ocupado ni con un hueco que
+        // otra paciente tenga apartado mientras paga.
+        if ($ocupado = $this->motivoOcupado($start, $end)) {
+            return ['message' => $ocupado, 'appointment' => null];
         }
 
         // Vincula al paciente en el pipeline. Si la conversación ya tiene lead
@@ -1279,6 +1351,300 @@ class BotService
                 .'. Quedó registrada en la agenda. Confírmasela al paciente con calidez y recuérdale la dirección de la clínica.',
             'appointment' => $appointment,
         ];
+    }
+
+    /**
+     * Mueve a otro día u hora una cita que la paciente ya tenía.
+     *
+     * No vuelve a cobrar: la valoración ya está pagada y lo que cambia es el
+     * cupo, no el trato. Sí revalida la agenda ENTERA —día cerrado, jornada,
+     * descanso, huecos ocupados y apartados—, porque una hora que la paciente
+     * propone de memoria («muévela para las 12:30») no pasó nunca por
+     * `consultar_disponibilidad`.
+     *
+     * @param  array<string,mixed>  $input
+     */
+    private function toolReschedule(array $input): string
+    {
+        $cita = $this->citaObjetivo($input['cita_id'] ?? null, 'mover');
+
+        if (is_string($cita)) {
+            return $cita;
+        }
+
+        $tz = Settings::googleTimezone();
+        $now = Carbon::now($tz);
+
+        $antes = $this->enHoraLocal($cita->starts_at, $tz);
+        // La duración se conserva: es la del procedimiento que ya acordaron, y
+        // recalcularla por el nombre del servicio arriesga cambiarla sin que
+        // nadie lo haya pedido.
+        $duracion = max(15, (int) abs($antes->diffInMinutes($this->enHoraLocal($cita->ends_at, $tz))));
+
+        $start = Carbon::parse($input['fecha_hora'], $tz);
+        $end = $start->copy()->addMinutes($duracion);
+
+        if ($start->lte($now)) {
+            return 'ERROR: esa fecha y hora ya pasaron, así que no se puede mover ahí. Consulta consultar_disponibilidad y ofrécele horarios futuros.';
+        }
+
+        if ($fueraDeHorario = $this->motivoFueraDeHorario($start, $end)) {
+            return $fueraDeHorario;
+        }
+
+        if ($ocupado = $this->motivoOcupado($start, $end, $cita)) {
+            return $ocupado;
+        }
+
+        $motivo = trim((string) ($input['motivo'] ?? ''));
+        $nota = 'Reprogramada por la asistente el '.$now->format('d/m/Y H:i').': estaba el '
+            .$antes->format('d/m/Y h:i a').'.'.($motivo !== '' ? " Motivo: {$motivo}." : '');
+        $notas = trim((string) ($cita->notes ?? ''));
+
+        $cita->forceFill([
+            'starts_at' => $start->format('Y-m-d H:i:s'),
+            'ends_at' => $end->format('Y-m-d H:i:s'),
+            // Las marcas de recordatorio se refieren a la fecha VIEJA. Sin
+            // limpiarlas, a quien ya recibió el aviso de 24 h no le llega
+            // NINGUNO para la fecha nueva y se queda con el recordatorio viejo
+            // como última información. Es el mismo cuidado que tiene el panel
+            // al mover una cita a mano (ver AppointmentController::update).
+            'reminder_24h_sent_at' => null,
+            'reminder_2h_sent_at' => null,
+            'notes' => mb_substr(trim($notas !== '' ? $notas."\n".$nota : $nota), 0, 2000),
+        ])->save();
+
+        $avisoAgenda = '';
+
+        try {
+            $google = GoogleCalendarService::fromConfig();
+
+            // Si el evento nunca llegó a crearse (una sincronización que falló
+            // en su día) se crea ahora: la cita existe y tiene que verse.
+            if (filled($cita->google_event_id)) {
+                $google->updateEvent($cita);
+            } else {
+                $cita->google_event_id = $google->createEvent($cita);
+            }
+
+            $cita->forceFill(['google_synced_at' => now(), 'google_sync_error' => null])->save();
+        } catch (Throwable $e) {
+            $cita->forceFill(['google_sync_error' => $e->getMessage()])->save();
+            $avisoAgenda = ' El cambio quedó guardado, pero el calendario de la doctora no se pudo actualizar ('
+                .$e->getMessage().'): confírmale igual la fecha nueva a la paciente.';
+        }
+
+        Log::info('El asistente reprogramó una cita', [
+            'appointment_id' => $cita->id,
+            'conversation_id' => $this->conversation?->id,
+            'antes' => $antes->format('Y-m-d H:i'),
+            'ahora' => $start->format('Y-m-d H:i'),
+        ]);
+
+        // El plazo de 24 h se cuenta contra la hora de la cita VIEJA, que es la
+        // que se estaba incumpliendo. La cita se mueve igual —la doctora lo
+        // prefiere a perder a la paciente—, pero tiene que quedarle claro que
+        // el plazo existe, o la próxima vez lo descubre perdiendo el dinero.
+        $politica = $antes->lte($now->copy()->addDay())
+            ? "\n\nOJO: faltaban menos de 24 horas para la cita original. Se movió igual, pero díselo con calidez en este mismo mensaje: "
+                .'los cambios o cancelaciones con menos de 24 horas de anticipación no dan derecho a la devolución del valor de la valoración, '
+                .'así que si tampoco puede con la fecha nueva te avise con más tiempo. No la regañes ni se lo cobres: es información, no una advertencia.'
+            : '';
+
+        $cuando = $start->locale('es')->isoFormat('dddd D [de] MMMM').' a las '.$start->locale('es')->isoFormat('h:mm a');
+
+        return 'Listo: la cita de '.$cita->patient_name.' se movió del '
+            .$antes->locale('es')->isoFormat('dddd D [de] MMMM [a las] h:mm a').' al '.$cuando.'.'
+            .$avisoAgenda
+            ."\n\nNO tiene que volver a pagar: la valoración que ya pagó pasa a la fecha nueva. Díselo, que es lo primero que teme."
+            ."\n\nConfírmale la nueva fecha y hora con calidez, recuérdale la dirección de la clínica y avísale que los recordatorios le llegarán para la fecha nueva."
+            .$politica;
+    }
+
+    /**
+     * Cancela una cita que la paciente ya tenía.
+     *
+     * Solo mueve la cita y el calendario. El dinero NO se toca desde aquí: la
+     * devolución la hace una persona, y por eso el resultado le dice a Lore si
+     * corresponde y que escale — decirle a la paciente «ya te lo devolvimos»
+     * sería mentirle sobre plata suya.
+     *
+     * @param  array<string,mixed>  $input
+     */
+    private function toolCancel(array $input): string
+    {
+        $cita = $this->citaObjetivo($input['cita_id'] ?? null, 'cancelar');
+
+        if (is_string($cita)) {
+            return $cita;
+        }
+
+        $tz = Settings::googleTimezone();
+        $now = Carbon::now($tz);
+        $cuando = $this->enHoraLocal($cita->starts_at, $tz);
+
+        $motivo = trim((string) ($input['motivo'] ?? ''));
+        $nota = 'Cancelada por la asistente el '.$now->format('d/m/Y H:i').'.'
+            .($motivo !== '' ? " Motivo: {$motivo}." : '');
+        $notas = trim((string) ($cita->notes ?? ''));
+
+        $avisoAgenda = '';
+        $eventoBorrado = ! filled($cita->google_event_id);
+
+        // El evento sale del calendario para que el hueco vuelva a venderse. Si
+        // Google falla, la cita se cancela igual: dejarla como «agendada» sería
+        // peor —le seguirían llegando recordatorios de una cita que ella misma
+        // canceló—, y el hueco lo libera la doctora a mano.
+        if (filled($cita->google_event_id)) {
+            try {
+                GoogleCalendarService::fromConfig()->deleteEvent($cita->google_event_id);
+                $eventoBorrado = true;
+            } catch (Throwable $e) {
+                $avisoAgenda = ' El evento no se pudo quitar del calendario de la doctora ('
+                    .$e->getMessage().'), pero la cita SÍ quedó cancelada.';
+            }
+        }
+
+        // `status = cancelled` es lo que apaga los recordatorios: el comando
+        // solo escribe a las citas en «scheduled» o «confirmed».
+        $cita->forceFill([
+            'status' => 'cancelled',
+            'google_event_id' => $eventoBorrado ? null : $cita->google_event_id,
+            'google_synced_at' => $eventoBorrado ? now() : $cita->google_synced_at,
+            'reminder_24h_sent_at' => null,
+            'reminder_2h_sent_at' => null,
+            'notes' => mb_substr(trim($notas !== '' ? $notas."\n".$nota : $nota), 0, 2000),
+        ])->save();
+
+        Log::info('El asistente canceló una cita', [
+            'appointment_id' => $cita->id,
+            'conversation_id' => $this->conversation?->id,
+            'era_para' => $cuando->format('Y-m-d H:i'),
+        ]);
+
+        $aTiempo = $cuando->gt($now->copy()->addDay());
+
+        $devolucion = $aTiempo
+            ? 'Avisó con MÁS de 24 horas de anticipación, así que SÍ le corresponde la devolución del valor de la valoración. '
+                .'Díselo, y escala con escalar_a_humano en este mismo turno para que una persona del consultorio le haga el reembolso. '
+                .'NO le digas que ya está devuelto ni le prometas una fecha: tú no tramitas el dinero.'
+            : 'Avisó con MENOS de 24 horas de anticipación, así que según la política NO se le devuelve el valor de la valoración. '
+                .'Explícaselo con calidez y sin dramatizar, una sola vez, y no la hagas sentir mal.';
+
+        return 'Listo: la cita de '.$cita->patient_name.' del '
+            .$cuando->locale('es')->isoFormat('dddd D [de] MMMM [a las] h:mm a')
+            .' quedó CANCELADA y ya no recibirá recordatorios de ella.'.$avisoAgenda
+            ."\n\n".$devolucion
+            ."\n\nDespídete con calidez y déjale la puerta abierta para agendar cuando quiera.";
+    }
+
+    /**
+     * La cita sobre la que Lore va a actuar, o el texto que debe leer si no hay
+     * una sola candidata clara.
+     *
+     * Devolver el error como string y no lanzar es deliberado: lo que Lore
+     * necesita no es una excepción, es una instrucción de qué decirle a la
+     * paciente. Y sobre todo, JAMÁS puede tocar la cita de otra: si no se logra
+     * identificar la suya, aquí no se mueve nada.
+     */
+    private function citaObjetivo(mixed $id, string $verbo): Appointment|string
+    {
+        $citas = $this->citasProximas();
+
+        if ($citas->isEmpty()) {
+            return "ERROR: no encuentro ninguna cita próxima a nombre de esta paciente, así que no hay nada que {$verbo}. "
+                .'NO le digas que se la moviste ni que se la cancelaste: no sería cierto. '
+                .'Pregúntale con calidez a nombre de quién y para qué día quedó, y si insiste en que sí la tiene, escala con escalar_a_humano.';
+        }
+
+        $id = (int) $id;
+
+        if ($id > 0) {
+            return $citas->firstWhere('id', $id)
+                ?: 'ERROR: esa cita no es de esta paciente o ya no está activa, así que no se tocó nada. '.$this->listaDeCitas($citas);
+        }
+
+        if ($citas->count() > 1) {
+            return "Esta paciente tiene más de una cita próxima y no se movió ninguna. Pregúntale CUÁL quiere {$verbo} "
+                .'y vuelve a llamar la herramienta con el cita_id que corresponda. '.$this->listaDeCitas($citas);
+        }
+
+        return $citas->first();
+    }
+
+    /**
+     * Las citas futuras de la paciente con la que se está conversando.
+     *
+     * Se filtra en PHP y no en SQL a propósito: el teléfono está guardado de
+     * cualquier forma (con 57 y sin él, con espacios), y la comparación buena
+     * es la que ya usa el resto del sistema. Son las citas FUTURAS de una
+     * clínica, así que la lista es corta.
+     *
+     * @return Collection<int,Appointment>
+     */
+    private function citasProximas(): Collection
+    {
+        $lead = $this->conversation?->lead;
+        $telefono = Settings::phoneWithCountryCode($lead?->phone);
+
+        // Sin lead ni teléfono no hay forma de saber cuál es «su» cita, y
+        // adivinar por el nombre movería la de otra paciente que se llame igual.
+        if (! $lead && blank($telefono)) {
+            return collect();
+        }
+
+        return $this->user->appointments()
+            ->whereIn('status', ['scheduled', 'confirmed'])
+            ->where('starts_at', '>=', Carbon::now(Settings::googleTimezone())->format('Y-m-d H:i:s'))
+            ->orderBy('starts_at')
+            ->with('service')
+            ->get()
+            ->filter(fn (Appointment $c) => ($lead && $c->lead_id === $lead->id)
+                || ($telefono && Settings::phoneWithCountryCode($c->patient_phone) === $telefono))
+            ->values();
+    }
+
+    /**
+     * Listado de citas para que Lore sepa de cuáles habla y con qué id.
+     *
+     * @param  Collection<int,Appointment>  $citas
+     */
+    private function listaDeCitas(Collection $citas): string
+    {
+        $tz = Settings::googleTimezone();
+
+        $lineas = $citas->map(function (Appointment $c) use ($tz) {
+            $cuando = $this->enHoraLocal($c->starts_at, $tz)->locale('es')->isoFormat('dddd D [de] MMMM [a las] h:mm a');
+
+            return "cita_id {$c->id}: {$cuando}".($c->service?->name ? " ({$c->service->name})" : '');
+        })->implode('; ');
+
+        return "Sus citas próximas son — {$lineas}. Los cita_id son internos: nunca se los menciones a la paciente.";
+    }
+
+    /**
+     * Lo que Lore debe saber de entrada sobre las citas de esta paciente.
+     *
+     * Va en el prompt y no solo en las herramientas porque el problema aparece
+     * antes de llamarlas: sin esto, a un «necesito cambiar mi cita» Lore
+     * responde preguntando cuándo la tiene, que es un dato que el consultorio
+     * ya tiene y que la paciente no siempre recuerda.
+     */
+    private function citasPrompt(): string
+    {
+        if (! $this->canSchedule()) {
+            return '';
+        }
+
+        $citas = $this->citasProximas();
+
+        if ($citas->isEmpty()) {
+            return '';
+        }
+
+        return '- Esta paciente YA tiene cita agendada. '.$this->listaDeCitas($citas)
+            .' Cuando hable de «mi cita» es esa: no le preguntes cuándo la tiene, ya lo sabes. '
+            .'Puedes moverla con reagendar_cita o cancelarla con cancelar_cita.';
     }
 
     /**
@@ -1397,11 +1763,11 @@ class BotService
         // Ojo: el heredoc desindenta el literal, no lo interpolado. Estas líneas
         // van sin sangría para que el prompt quede alineado.
         $prioridadPagoLines = $pagoEnLinea
-            ? "- Para pagar la valoración ofrécele las DOS opciones y deja que elija: el link de pago en línea (el más cómodo, porque confirma solo) o transferencia/Nequi."
+            ? '- Para pagar la valoración ofrécele las DOS opciones y deja que elija: el link de pago en línea (el más cómodo, porque confirma solo) o transferencia/Nequi.'
                 ."\n- En cuanto elija transferencia o Nequi, escríbele los datos COMPLETOS de una vez. No esperes a que te los pida por segunda vez ni le digas «recuerda hacer la transferencia» sin ponerle a dónde: eso la deja atascada."
                 ."\n- Haber NOMBRADO la transferencia como opción no es haber enviado los datos: los datos son el banco, el número, el titular y el Nequi. Si no los has escrito con sus números, todavía no se los has dado."
                 ."\n- El link de pago NO es una forma de pago genérica: es EXCLUSIVAMENTE para pagar la valoración. Nunca lo ofrezcas para pagar tratamientos u otros servicios."
-            : "- Para pagar la valoración comparte los datos de transferencia, consignación o Nequi que aparecen arriba, y pídele que te AVISE por este chat cuando lo haya hecho."
+            : '- Para pagar la valoración comparte los datos de transferencia, consignación o Nequi que aparecen arriba, y pídele que te AVISE por este chat cuando lo haya hecho.'
                 ."\n- NO hay link de pago en línea disponible: no lo menciones, no lo prometas y NUNCA inventes uno.";
 
         // Presentarse o no NO se le deja al criterio del modelo leyendo el
@@ -1423,6 +1789,10 @@ class BotService
             // Conversación viva.
             default => "- Te llamas {$c['bot_name']}. Ya vienes conversando con esta paciente, así que no vuelvas a presentarte salvo que te lo pregunte.",
         };
+
+        // Las citas que la paciente ya tiene: van con la presentación, al final
+        // y por el mismo motivo (cambian en cada conversación y a cada rato).
+        $citasBlock = $this->citasPrompt();
 
         // El bloque de campaña y el de presentación cambian en CADA conversación
         // (el anuncio del que viene, si es su primer mensaje). Van al final del
@@ -1518,6 +1888,7 @@ class BotService
 
         # Esta conversación en concreto
         {$presentacion}
+        {$citasBlock}
         {$campaignBlock}
         PROMPT;
     }
@@ -1749,8 +2120,16 @@ class BotService
         - Las 24 horas se cuentan contra la HORA de la cita, no contra el día: para una cita el jueves a las 3:00 p. m., el plazo se cierra el miércoles a las 3:00 p. m. Si te preguntan si están a tiempo, cuéntalo con la fecha y hora reales de su cita.
         - Dilo AL CONFIRMAR la cita, en una sola frase, con calidez y sin sonar a advertencia, junto al aviso de los recordatorios. Es obligatorio: tiene que quedarle claro ANTES de que le afecte, no cuando ya la incumplió, porque es dinero que ya pagó.
         - Si pregunta por la política, explícasela con claridad y sin dramatizar.
-        - TÚ NO puedes cancelar ni reprogramar una cita ya agendada, ni hacer devoluciones: no tienes ninguna herramienta para nada de eso. Si la paciente quiere cancelar, moverla o que le devuelvan el dinero, escálalo a una persona con escalar_a_humano y dile que el equipo del consultorio la contacta. NUNCA le digas que ya quedó cancelada, reprogramada o devuelta, ni que "se lo gestionas": no es cierto y se quedaría esperando.
-        - Puedes confirmarle si le corresponde o no la devolución según el plazo —eso es informarla, no tramitarla—, pero el trámite lo hace una persona.
+        - Puedes confirmarle si le corresponde o no la devolución según el plazo —eso es informarla, no tramitarla—, pero el DINERO lo mueve una persona, nunca tú.
+
+        # Mover o cancelar una cita ya agendada (tienes herramientas para las dos cosas)
+        - Si quiere CAMBIAR el día o la hora de una cita que ya tiene, muévela tú con reagendar_cita. Es lo que hay que ofrecerle siempre primero: casi nadie quiere cancelar, quiere otro día.
+        - Dile SIEMPRE, al mover la cita, que NO tiene que volver a pagar: la valoración que ya pagó pasa a la fecha nueva. Es lo primero que teme y por lo que muchas ni preguntan.
+        - Antes de moverla, llama consultar_disponibilidad y ofrécele horas reales, igual que al agendar. La herramienta rechaza cualquier hora ocupada, fuera de la jornada, en el descanso o en un día cerrado.
+        - Usa cancelar_cita SOLO si dice con claridad que no va a asistir y no quiere otra fecha. Antes de cancelar, ofrécele UNA vez moverla; si insiste en cancelar, hazlo sin insistir más.
+        - No le confirmes el cambio ni la cancelación hasta que la herramienta te lo confirme. Si te devuelve un error, NO digas que quedó hecho: cuéntale lo que pasa y ofrécele otra opción.
+        - Si la herramienta te dice que tiene varias citas próximas, pregúntale cuál quiere mover o cancelar y vuelve a llamarla con el cita_id. Los cita_id son internos: NUNCA se los menciones a la paciente, háblale de la fecha y la hora.
+        - Las DEVOLUCIONES no las haces tú: cuando le corresponda que le devuelvan el valor de la valoración, díselo y escala con escalar_a_humano para que una persona la tramite. Nunca le digas que ya está devuelta ni le prometas una fecha de reembolso.
         PROMPT;
     }
 
@@ -1764,9 +2143,9 @@ class BotService
         $services = $this->user->services()->where('is_active', true)->with('media')->orderBy('sort_order')->get();
         if ($services->isNotEmpty()) {
             $lines = $services->map(function ($s) {
-                $parts = ["## {$s->name}" . ($s->category ? " ({$s->category})" : '')];
+                $parts = ["## {$s->name}".($s->category ? " ({$s->category})" : '')];
                 if (filled($s->price)) {
-                    $parts[] = 'Precio referencial: $' . number_format((float) $s->price, 0, ',', '.') . ' COP';
+                    $parts[] = 'Precio referencial: $'.number_format((float) $s->price, 0, ',', '.').' COP';
                 }
                 if (filled($s->duration_minutes)) {
                     $parts[] = "Duración: {$s->duration_minutes} minutos";
@@ -1781,18 +2160,18 @@ class BotService
                     $videos = $usable->where('type', 'video')->count();
                     $bits = [];
                     if ($photos) {
-                        $bits[] = $photos . ' foto' . ($photos > 1 ? 's' : '');
+                        $bits[] = $photos.' foto'.($photos > 1 ? 's' : '');
                     }
                     if ($videos) {
-                        $bits[] = $videos . ' video' . ($videos > 1 ? 's' : '');
+                        $bits[] = $videos.' video'.($videos > 1 ? 's' : '');
                     }
-                    $parts[] = 'Material visual disponible (' . implode(' y ', $bits)
-                        . "). Para enviarlo usa la etiqueta [[media:{$s->slug}]].";
+                    $parts[] = 'Material visual disponible ('.implode(' y ', $bits)
+                        ."). Para enviarlo usa la etiqueta [[media:{$s->slug}]].";
                 }
 
                 return implode("\n", $parts);
             });
-            $sections[] = "### SERVICIOS\n" . $lines->implode("\n\n");
+            $sections[] = "### SERVICIOS\n".$lines->implode("\n\n");
         }
 
         $entries = $this->user->knowledgeEntries()->where('is_active', true)->orderBy('sort_order')->get();
