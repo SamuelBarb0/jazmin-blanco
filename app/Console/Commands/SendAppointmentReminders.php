@@ -148,6 +148,25 @@ class SendAppointmentReminders extends Command
                         continue;
                     }
 
+                    // Reserva el envío ANTES de mandarlo. El UPDATE condicional solo
+                    // lo gana un proceso: si dos corridas coinciden en el mismo
+                    // minuto, la segunda ve 0 filas afectadas y se aparta. Marcar
+                    // DESPUÉS de enviar dejaba una ventana en la que ambas leían la
+                    // cita como pendiente y la paciente recibía el recordatorio dos
+                    // veces (pasó 5 veces entre el 10 y el 19 de agosto de 2026).
+                    $columna = $tipo === '2h' ? 'reminder_2h_sent_at' : 'reminder_24h_sent_at';
+
+                    $reservada = Appointment::query()
+                        ->whereKey($cita->id)
+                        ->whereNull($columna)
+                        ->update([$columna => now()]);
+
+                    if ($reservada === 0) {
+                        $this->line("  <fg=gray>ya enviado por otra corrida</> [{$tipo}] {$cita->patient_name}");
+
+                        continue;
+                    }
+
                     try {
                         $ok = $config['template']
                             ? $whatsapp->sendTemplate($telefono, $config['template'], $config['language'], $this->parametros($cita, $ahora, $tz))
@@ -158,17 +177,20 @@ class SendAppointmentReminders extends Command
                     }
 
                     if (! $ok) {
+                        // Suelta la reserva: el envío no salió, así que la siguiente
+                        // corrida debe poder reintentarlo. Sin esto, un fallo de
+                        // WhatsApp dejaría a la paciente sin recordatorio para siempre.
+                        Appointment::query()->whereKey($cita->id)->update([$columna => null]);
+
                         $fallidos++;
                         $this->line("  <fg=red>falló</> [{$tipo}] {$cita->patient_name} · {$telefono}");
 
                         continue;
                     }
 
-                    // La marca se pone SIEMPRE que el envío salió bien, para no
-                    // repetir el recordatorio en la siguiente corrida.
-                    $cita->forceFill([
-                        $tipo === '2h' ? 'reminder_2h_sent_at' : 'reminder_24h_sent_at' => now(),
-                    ])->save();
+                    // La reserva de arriba ya dejó puesta la marca; aquí solo se
+                    // refresca el modelo en memoria para lo que venga después.
+                    $cita->setAttribute($columna, now());
 
                     $this->registrarEnConversacion($cita, $texto);
 
