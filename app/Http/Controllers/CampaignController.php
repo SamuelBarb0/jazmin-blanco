@@ -145,7 +145,20 @@ class CampaignController extends Controller
             $imported++;
         }
 
-        return back()->with('success', "Meta Ads sincronizado: {$imported} campañas ({$created} nuevas).");
+        $cuentas = count($ads->adAccounts());
+        $resumen = "Meta Ads sincronizado: {$imported} campañas ({$created} nuevas)"
+            .($cuentas > 1 ? " de {$cuentas} cuentas publicitarias." : '.');
+
+        // Una cuenta caída no tumba la importación de la otra, pero tiene que
+        // decirse: si no, «importé y no salió la campaña nueva» no tiene
+        // explicación en ninguna pantalla y parece que el CRM no la ve.
+        if ($avisos = $ads->avisos()) {
+            $detalle = collect($avisos)->map(fn ($motivo, $cuenta) => "{$cuenta} ({$motivo})")->implode('; ');
+
+            return back()->with('success', $resumen.' ⚠️ No se pudo leer: '.$detalle);
+        }
+
+        return back()->with('success', $resumen);
     }
 
     public function store(Request $request): RedirectResponse
