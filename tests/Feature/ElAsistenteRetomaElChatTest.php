@@ -9,6 +9,7 @@ use App\Models\Message;
 use App\Models\User;
 use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
@@ -163,8 +164,8 @@ class ElAsistenteRetomaElChatTest extends TestCase
             'content' => 'Hola',
         ]);
 
-        \Illuminate\Support\Facades\Http::fake([
-            'graph.facebook.com/*' => \Illuminate\Support\Facades\Http::response(['messages' => [['id' => 'wamid.x']]], 200),
+        Http::fake([
+            'graph.facebook.com/*' => Http::response(['messages' => [['id' => 'wamid.x']]], 200),
         ]);
         config()->set('services.whatsapp.token', 'token-de-prueba');
         config()->set('services.whatsapp.phone_id', '111111111111111');

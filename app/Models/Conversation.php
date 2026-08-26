@@ -2,10 +2,10 @@
 
 namespace App\Models;
 
+use App\Support\Settings;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use App\Support\Settings;
 use Illuminate\Support\Carbon;
 
 class Conversation extends Model

@@ -7,6 +7,7 @@ use App\Models\Lead;
 use App\Models\Message;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
 /**
@@ -60,7 +61,7 @@ class BuscadorDeLaBandejaTest extends TestCase
     }
 
     /** @param  array<string,mixed>  $parametros */
-    private function buscar(array $parametros): \Illuminate\Testing\TestResponse
+    private function buscar(array $parametros): TestResponse
     {
         return $this->actingAs($this->doctora)->get(route('inbox.index', $parametros));
     }

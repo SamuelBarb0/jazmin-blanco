@@ -14,16 +14,27 @@ use Throwable;
 class Settings
 {
     private const KEY_ANTHROPIC = 'anthropic_api_key';
+
     private const KEY_MODEL = 'anthropic_model';
+
     private const KEY_GOOGLE_SA = 'google_service_account';
+
     private const KEY_GOOGLE_CALENDAR = 'google_calendar_id';
+
     private const KEY_GOOGLE_TIMEZONE = 'google_timezone';
+
     private const KEY_GOOGLE_OAUTH = 'google_oauth';
+
     private const KEY_MP_ACCESS_TOKEN = 'mp_access_token';
+
     private const KEY_MP_PUBLIC_KEY = 'mp_public_key';
+
     private const KEY_MP_TEST_ACCESS_TOKEN = 'mp_test_access_token';
+
     private const KEY_MP_TEST_PUBLIC_KEY = 'mp_test_public_key';
+
     private const KEY_MP_TEST_MODE = 'mp_test_mode';
+
     private const KEY_WA_TEST_NUMBERS = 'whatsapp_test_numbers';
 
     public static function get(string $key, ?string $default = null): ?string
@@ -848,7 +859,7 @@ class Settings
      * duplicados sola, y el motivo es para que la clínica entienda su propia
      * lista dentro de seis meses. A la paciente no se le cuenta el motivo.
      *
-     * @return array<string,string>  '2026-12-25' => 'Navidad'
+     * @return array<string,string> '2026-12-25' => 'Navidad'
      */
     public static function closedDays(): array
     {

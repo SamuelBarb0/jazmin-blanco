@@ -59,8 +59,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
         public readonly ?array $referral = null,
         public readonly ?array $media = null,
         public readonly ?string $phoneNumberId = null,
-    ) {
-    }
+    ) {}
 
     public function handle(): void
     {
