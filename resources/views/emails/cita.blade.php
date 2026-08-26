@@ -16,7 +16,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ $reprogramada ? 'Tu cita cambió de fecha' : 'Tu cita quedó agendada' }}</title>
+<title>{{ $reprogramada ? 'Tu cita cambió de fecha' : ($confirmada ? 'Confirmamos tu pago y tu cita' : 'Tu cita quedó agendada') }}</title>
 </head>
 <body style="margin:0;padding:0;background-color:#f4f1ee;">
 
@@ -41,7 +41,7 @@
               {{ $clinica }}
             </div>
             <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#c4a882;padding-top:6px;">
-              {{ $reprogramada ? 'Cambio de fecha' : 'Confirmación de cita' }}
+              {{ $reprogramada ? 'Cambio de fecha' : ($confirmada ? 'Pago confirmado' : 'Confirmación de cita') }}
             </div>
           </td>
         </tr>
@@ -57,6 +57,8 @@
             <p style="margin:0 0 26px;font-size:15px;line-height:1.7;color:#5a534e;">
               @if ($reprogramada)
                 Tu cita fue reprogramada. Esta es la nueva fecha:
+              @elseif ($confirmada)
+                Confirmamos que recibimos tu pago. Tu cita queda confirmada:
               @else
                 Tu cita quedó agendada. Estos son los datos:
               @endif

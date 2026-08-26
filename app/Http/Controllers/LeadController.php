@@ -158,6 +158,6 @@ class LeadController extends Controller
 
     private function authorizeLead(Request $request, Lead $lead): void
     {
-        abort_unless($lead->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($lead), 403);
     }
 }

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Appointment;
+use App\Models\Conversation;
 use App\Models\Lead;
 use App\Models\Service;
 use App\Models\User;
@@ -126,5 +127,78 @@ class EquipoDeLaClinicaTest extends TestCase
     {
         $this->assertFalse($this->ingeniero->puedeAdministrarEquipo());
         $this->assertTrue($this->doctora->puedeAdministrarEquipo());
+    }
+
+    /**
+     * EL AGUJERO QUE DEJÓ LA FUNCIÓN DE EQUIPO (reporte de la doctora,
+     * 26-ago-2026: «tampoco puedo dar respuesta a los mensajes en el
+     * computador, solo en el celular»).
+     *
+     * Las relaciones del modelo se pasaron a `cuenta_id`, pero las
+     * comprobaciones de permiso de los controladores se quedaron comparando
+     * contra `$request->user()->id`. Resultado: el equipo VEÍA la bandeja
+     * entera y recibía un 403 al abrir cualquier chat — la lista se cargaba,
+     * el clic no hacía nada, y desde fuera parecía que el CRM estaba roto.
+     */
+    public function test_el_equipo_puede_abrir_un_chat_de_la_clinica(): void
+    {
+        $conversacion = Conversation::create([
+            'user_id' => $this->doctora->id,
+            'channel' => 'whatsapp',
+            'title' => 'Marcela',
+        ]);
+
+        $this->actingAs($this->ingeniero)
+            ->get(route('inbox.show', $conversacion))
+            ->assertOk();
+    }
+
+    public function test_el_equipo_puede_pausar_al_asistente_en_un_chat(): void
+    {
+        $conversacion = Conversation::create([
+            'user_id' => $this->doctora->id,
+            'channel' => 'whatsapp',
+            'title' => 'Marcela',
+            'bot_enabled' => true,
+        ]);
+
+        $this->actingAs($this->ingeniero)
+            ->patch(route('inbox.toggle', $conversacion))
+            ->assertRedirect();
+
+        $this->assertFalse($conversacion->fresh()->bot_enabled);
+    }
+
+    /** Lo mismo en la agenda: verificar una transferencia también daba 403. */
+    public function test_el_equipo_puede_tocar_una_cita_de_la_clinica(): void
+    {
+        $cita = Appointment::create([
+            'user_id' => $this->doctora->id,
+            'patient_name' => 'Ana',
+            'starts_at' => now()->addDay(),
+            'ends_at' => now()->addDay()->addHour(),
+            'status' => 'scheduled',
+        ]);
+
+        $this->actingAs($this->ingeniero)
+            ->delete(route('appointments.destroy', $cita))
+            ->assertRedirect();
+
+        $this->assertDatabaseMissing('appointments', ['id' => $cita->id]);
+    }
+
+    /** Y el 403 sigue en pie para quien NO es de la clínica. */
+    public function test_una_clinica_ajena_sigue_recibiendo_403(): void
+    {
+        $otraDoctora = User::factory()->create();
+        $conversacion = Conversation::create([
+            'user_id' => $this->doctora->id,
+            'channel' => 'whatsapp',
+            'title' => 'Marcela',
+        ]);
+
+        $this->actingAs($otraDoctora)
+            ->get(route('inbox.show', $conversacion))
+            ->assertForbidden();
     }
 }

@@ -30,7 +30,8 @@ class CitaParaLaPaciente extends Mailable
     use Queueable, SerializesModels;
 
     /**
-     * @param  string  $tipo  'agendada' (cita nueva) o 'reprogramada' (cambió la hora)
+     * @param  string  $tipo  'agendada' (cita nueva), 'reprogramada' (cambió
+     *                        la hora) o 'confirmada' (le verificamos el pago)
      */
     public function __construct(
         public Appointment $appointment,
@@ -42,9 +43,11 @@ class CitaParaLaPaciente extends Mailable
         $clinica = Settings::botConfig()['clinic_name'];
 
         return new Envelope(
-            subject: $this->tipo === 'reprogramada'
-                ? 'Tu cita cambió de fecha · '.$clinica
-                : 'Tu cita quedó agendada · '.$clinica,
+            subject: match ($this->tipo) {
+                'reprogramada' => 'Tu cita cambió de fecha · '.$clinica,
+                'confirmada' => 'Confirmamos tu pago y tu cita · '.$clinica,
+                default => 'Tu cita quedó agendada · '.$clinica,
+            },
         );
     }
 
@@ -66,6 +69,7 @@ class CitaParaLaPaciente extends Mailable
             view: 'emails.cita',
             with: [
                 'reprogramada' => $this->tipo === 'reprogramada',
+                'confirmada' => $this->tipo === 'confirmada',
                 'nombre' => $nombre !== '' ? mb_convert_case($nombre, MB_CASE_TITLE, 'UTF-8') : null,
                 'dia' => $inicio->isoFormat('dddd D [de] MMMM [de] YYYY'),
                 'hora' => $inicio->isoFormat('h:mm a'),

@@ -81,11 +81,11 @@ class ServiceMediaController extends Controller
 
     private function authorizeService(Request $request, Service $service): void
     {
-        abort_unless($service->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($service), 403);
     }
 
     private function authorizeMedia(Request $request, ServiceMedia $medium): void
     {
-        abort_unless($medium->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($medium), 403);
     }
 }

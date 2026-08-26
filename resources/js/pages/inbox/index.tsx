@@ -3,9 +3,9 @@ import AppLayout from '@/layouts/app-layout';
 import { cn } from '@/lib/utils';
 import { type BreadcrumbItem, type SharedData } from '@/types';
 import { Head, router, useForm, usePage } from '@inertiajs/react';
-import { AlertTriangle, Bot, ChevronLeft, Clock, FileText, HandHelping, MessageCircle, Paperclip, Pause, Play, SendHorizonal, User, X } from 'lucide-react';
+import { AlertTriangle, Bot, ChevronLeft, Clock, FileText, HandHelping, MessageCircle, Paperclip, Pause, Play, Search, SendHorizonal, User, X } from 'lucide-react';
 import { motion } from 'motion/react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface ChatMedia {
     type: 'image' | 'video' | 'audio' | 'document';
@@ -39,6 +39,7 @@ interface ConversationRow {
     last_message_at: string | null;
     last_message_id: number | null;
     preview: string | null;
+    sin_responder: boolean;
 }
 
 interface Selected {
@@ -77,10 +78,14 @@ const hora = (iso: string | null): string =>
 export default function Inbox({
     conversations,
     selected,
+    q = '',
+    total = 0,
     auto_selected: autoSelected = false,
 }: {
     conversations: ConversationRow[];
     selected: Selected | null;
+    q?: string;
+    total?: number;
     auto_selected?: boolean;
 }) {
     // El chat que abre solo el escritorio para no dejar el panel vacío NO debe
@@ -97,6 +102,27 @@ export default function Inbox({
     });
 
     const esperandoHumano = conversations.filter((c) => c.needs_human).length;
+    const sinResponder = conversations.filter((c) => c.sin_responder && !c.needs_human).length;
+
+    // La búsqueda va al servidor —hace falta para mirar dentro de los
+    // mensajes—, pero no en cada tecla: se espera a que deje de escribir. El
+    // valor que se ve es el local, así que el campo nunca "salta" cuando llega
+    // la respuesta ni cuando el refresco de cada 5 s recarga la lista.
+    const [busqueda, setBusqueda] = useState(q);
+
+    useEffect(() => {
+        if (busqueda === q) return;
+
+        const id = setTimeout(() => {
+            router.get(
+                route('inbox.index'),
+                busqueda.trim() ? { q: busqueda.trim() } : {},
+                { preserveState: true, preserveScroll: true, replace: true, only: ['conversations', 'q', 'total', 'selected', 'auto_selected'] },
+            );
+        }, 350);
+
+        return () => clearTimeout(id);
+    }, [busqueda, q]);
 
     useEffect(() => {
         scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -202,7 +228,31 @@ export default function Inbox({
                 >
                     <header className="border-b border-border/60 px-4 py-3">
                         <h2 className="font-display text-lg">Conversaciones</h2>
-                        <p className="text-xs text-muted-foreground">{conversations.length} chats de WhatsApp</p>
+                        <p className="text-xs text-muted-foreground">
+                            {q ? `${conversations.length} de ${total} chats` : `${conversations.length} chats de WhatsApp`}
+                        </p>
+
+                        <div className="relative mt-2">
+                            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                            <input
+                                type="search"
+                                value={busqueda}
+                                onChange={(e) => setBusqueda(e.target.value)}
+                                placeholder="Buscar por nombre, número o mensaje…"
+                                // Se oculta la «x» propia del navegador: con la nuestra al lado salían dos.
+                                className="w-full rounded-lg border border-border/60 bg-background/60 py-1.5 pr-7 pl-8 text-xs outline-none focus:border-primary/40 [&::-webkit-search-cancel-button]:hidden"
+                            />
+                            {busqueda !== '' && (
+                                <button
+                                    type="button"
+                                    onClick={() => setBusqueda('')}
+                                    className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                    aria-label="Limpiar la búsqueda"
+                                >
+                                    <X className="size-3.5" />
+                                </button>
+                            )}
+                        </div>
                         {/* El contador va en la cabecera y no solo como etiqueta
                             en cada fila: un chat escalado en la posición 30 de la
                             lista no se ve, y la gracia del escalamiento es
@@ -213,19 +263,34 @@ export default function Inbox({
                                 {esperandoHumano === 1 ? '1 chat espera a una persona' : `${esperandoHumano} chats esperan a una persona`}
                             </p>
                         )}
+                        {/* Un chat con Lore en pausa y la paciente esperando no
+                            se distingue de uno cualquiera al bajar la lista: así
+                            es como varias pacientes se quedaron días sin
+                            respuesta. El contador lo pone donde se ve. */}
+                        {sinResponder > 0 && (
+                            <p className="mt-1.5 ml-1.5 inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                                <AlertTriangle className="size-3" />
+                                {sinResponder === 1 ? '1 paciente sin responder' : `${sinResponder} pacientes sin responder`}
+                            </p>
+                        )}
                     </header>
 
                     <div className="flex-1 overflow-y-auto">
                         {conversations.length === 0 && (
                             <p className="p-4 text-sm text-muted-foreground">
-                                Todavía no hay conversaciones. Aparecerán aquí en cuanto una paciente escriba por WhatsApp.
+                                {q
+                                    ? `Ningún chat coincide con «${q}». Se busca por nombre, por número (bastan los últimos dígitos) y dentro de los mensajes.`
+                                    : 'Todavía no hay conversaciones. Aparecerán aquí en cuanto una paciente escriba por WhatsApp.'}
                             </p>
                         )}
 
                         {conversations.map((c) => (
                             <button
                                 key={c.id}
-                                onClick={() => router.get(route('inbox.show', c.id), {}, { preserveState: true })}
+                                // La búsqueda sobrevive al abrir un chat: si no,
+                                // volver a la lista devolvía los 300 y había que
+                                // teclear el número otra vez.
+                                onClick={() => router.get(route('inbox.show', c.id), q ? { q } : {}, { preserveState: true })}
                                 className={cn(
                                     'flex w-full flex-col gap-1 border-b border-border/40 px-4 py-3 text-left transition hover:bg-muted/50',
                                     selected?.id === c.id && 'bg-muted',
@@ -235,6 +300,11 @@ export default function Inbox({
                                     <span className="truncate text-sm font-medium">{c.lead?.name || c.title}</span>
                                     <span className="shrink-0 text-[11px] text-muted-foreground">{hace(c.last_message_at)}</span>
                                 </div>
+                                {/* El número, a la vista: es por lo que la
+                                    doctora identifica a una paciente cuando el
+                                    nombre viene del perfil de WhatsApp y no
+                                    coincide con el de la historia. */}
+                                {c.lead?.phone && <span className="truncate text-[11px] text-muted-foreground/80">{c.lead.phone}</span>}
                                 <span className="truncate text-xs text-muted-foreground">{c.preview || 'Sin mensajes'}</span>
                                 {/* Escalado y en pausa no son lo mismo: uno es una
                                     alerta por atender, el otro una decisión de la
@@ -244,11 +314,16 @@ export default function Inbox({
                                         <HandHelping className="size-2.5" /> Espera a una persona
                                     </span>
                                 ) : (
-                                    !c.bot_enabled && (
+                                    !c.bot_enabled &&
+                                    (c.sin_responder ? (
+                                        <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-500/25 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                                            <AlertTriangle className="size-2.5" /> Escribió y nadie respondió
+                                        </span>
+                                    ) : (
                                         <span className="inline-flex w-fit items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
                                             <Pause className="size-2.5" /> Lore en pausa
                                         </span>
-                                    )
+                                    ))
                                 )}
                             </button>
                         ))}
@@ -275,7 +350,7 @@ export default function Inbox({
                                     donde la lista está oculta. */}
                                 <button
                                     type="button"
-                                    onClick={() => router.get(route('inbox.index'), { lista: 1 }, { preserveState: true })}
+                                    onClick={() => router.get(route('inbox.index'), q ? { lista: 1, q } : { lista: 1 }, { preserveState: true })}
                                     className="-ml-1 shrink-0 rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground md:hidden"
                                     aria-label="Volver a las conversaciones"
                                 >

@@ -155,6 +155,12 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 $conversation->save();
             }
 
+            // Se decide ANTES de guardar el mensaje entrante: la reanudación
+            // mide el silencio del chat, y el mensaje que acaba de llegar es
+            // justamente lo que lo rompe. Guardándolo primero, el chat siempre
+            // parecería recién hablado y no se reanudaría nunca.
+            $reanudar = $conversation->debeReanudarAlAsistente();
+
             // El archivo se guarda ANTES de cualquier interruptor: que el bot
             // esté en pausa no debe costarle a la doctora la foto que le mandó
             // la paciente.
@@ -186,6 +192,21 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 ]);
 
                 return;
+            }
+
+            // La pausa que se puso sola al escribir a mano ya cumplió: el chat
+            // lleva horas quieto y la paciente vuelve a escribir. Si no se
+            // reanudara, ese mensaje se quedaría sin respuesta igual que los
+            // anteriores, y sin dejar rastro en ningún log.
+            if ($reanudar) {
+                $conversation->forceFill([
+                    'bot_enabled' => true,
+                    'bot_paused_at' => null,
+                ])->save();
+
+                Log::info('El asistente retoma un chat que llevaba horas en pausa.', [
+                    'conversation_id' => $conversation->id,
+                ]);
             }
 
             // La doctora tomó el control de este chat: el mensaje queda guardado

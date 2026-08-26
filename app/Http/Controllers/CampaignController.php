@@ -64,7 +64,10 @@ class CampaignController extends Controller
      */
     private function results(Request $request): array
     {
-        $userId = $request->user()->id;
+        // `cuenta_id` y no `id`: las citas cuelgan de la clínica, así que
+        // filtrar por el login de quien entró le daba ceros a todo el equipo
+        // salvo a la dueña, y sin ningún aviso de que faltaban filas.
+        $userId = $request->user()->cuenta_id;
 
         $leads = $request->user()->leads()
             ->whereNotNull('campaign_id')
@@ -194,6 +197,6 @@ class CampaignController extends Controller
 
     private function authorizeCampaign(Request $request, Campaign $campaign): void
     {
-        abort_unless($campaign->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($campaign), 403);
     }
 }

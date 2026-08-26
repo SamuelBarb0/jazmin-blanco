@@ -58,6 +58,6 @@ class KnowledgeController extends Controller
 
     private function authorizeEntry(Request $request, KnowledgeEntry $entry): void
     {
-        abort_unless($entry->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($entry), 403);
     }
 }

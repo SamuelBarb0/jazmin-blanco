@@ -593,6 +593,26 @@ class Settings
      *
      * @return array<int,string>
      */
+    /**
+     * Horas de silencio tras las que el asistente retoma un chat que se pausó
+     * solo al escribirle la doctora a mano.
+     *
+     * Doce y no veinticuatro porque la mayoría de esos chats se pausan por la
+     * mañana y la paciente vuelve a escribir al día siguiente temprano: con 24
+     * la reanudación llegaría casi siempre tarde. Y no menos, porque una
+     * conversación que la doctora está llevando a mano puede tener huecos de
+     * un par de horas y ahí el chat sigue siendo suyo.
+     *
+     * Puesto a 0 se apaga la reanudación y vuelve el comportamiento anterior
+     * (pausa hasta que alguien le dé al botón).
+     */
+    public static function botResumeHours(): int
+    {
+        $raw = self::get('bot_resume_hours');
+
+        return $raw === null || $raw === '' ? 12 : max(0, (int) $raw);
+    }
+
     public static function reactivationExcludedStages(): array
     {
         $raw = (string) (self::get('reactivation_excluded_stages') ?: 'agendado,en valoracion,cerrado,perdido');

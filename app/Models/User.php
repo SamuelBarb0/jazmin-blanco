@@ -5,6 +5,7 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -96,6 +97,21 @@ class User extends Authenticatable
     public function puedeAdministrarEquipo(): bool
     {
         return (bool) $this->es_propietario;
+    }
+
+    /**
+     * ¿Esta fila es de la clínica de quien entró?
+     *
+     * Es la pareja de las relaciones de arriba: si `leads()` lista por
+     * `cuenta_id`, el permiso para abrir o tocar una de esas filas tiene que
+     * mirar lo MISMO. Compararla contra `$user->id` —que es lo que hacían los
+     * controladores— le devolvía 403 a todo el equipo salvo a la dueña: veían
+     * las listas (porque la relación sí iba por cuenta) y no podían abrir ni
+     * escribir nada.
+     */
+    public function esDeSuCuenta(Model $fila): bool
+    {
+        return (int) $fila->getAttribute('user_id') === (int) $this->cuenta_id;
     }
 
     /**

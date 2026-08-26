@@ -230,11 +230,13 @@ class AppointmentController extends Controller
      * se usan las aprobadas en vez de texto libre; si se mandara texto, Meta lo
      * rechazaría con `131047` y nadie se enteraría.
      *
-     * @param  string  $tipo  'agendada' (cita nueva) o 'reprogramada' (cambió la hora)
+     * @param  string  $tipo  'agendada' (cita nueva), 'reprogramada' (cambió la
+     *                        hora) o 'confirmada' (le verificamos el pago)
      */
     private function avisarPaciente(Appointment $appointment, string $tipo = 'agendada'): string
     {
         $reprogramada = $tipo === 'reprogramada';
+        $confirmada = $tipo === 'confirmada';
 
         // Con indicativo. Antes se mandaba el número crudo y, como 67 de los
         // 82 teléfonos están guardados a 10 dígitos, Meta aceptaba el envío
@@ -244,8 +246,12 @@ class AppointmentController extends Controller
         $telefono = $appointment->telefonoWhatsapp();
 
         if (blank($telefono)) {
-            return $reprogramada
-                ? ' ⚠️ Sin teléfono: no se le pudo avisar del cambio de fecha.'
+            if ($reprogramada) {
+                return ' ⚠️ Sin teléfono: no se le pudo avisar del cambio de fecha.';
+            }
+
+            return $confirmada
+                ? ' ⚠️ Sin teléfono: no se le pudo confirmar el pago por WhatsApp.'
                 : ' ⚠️ Sin teléfono: no se le avisó y tampoco recibirá recordatorios.';
         }
 
@@ -272,11 +278,17 @@ class AppointmentController extends Controller
         $cuando = $appointment->starts_at->copy()->shiftTimezone($tz)->locale('es')->isoFormat('dddd D [de] MMMM [a las] h:mm a');
         $clinica = Settings::botConfig()['clinic_name'];
 
-        $texto = $reprogramada
-            ? "¡Hola {$nombre}! 👋 Tu cita fue reprogramada: queda para el {$cuando} en {$clinica}. "
-                .'Si ese horario no te sirve, respóndenos por este chat.'
-            : "¡Hola {$nombre}! 👋 Tu cita quedó agendada para el {$cuando} en {$clinica}. "
-                .'Si necesitas reprogramarla, respóndenos por este chat.';
+        $texto = match (true) {
+            $reprogramada => "¡Hola {$nombre}! 👋 Tu cita fue reprogramada: queda para el {$cuando} en {$clinica}. "
+                .'Si ese horario no te sirve, respóndenos por este chat.',
+            // Es la respuesta a un «apenas se refleje te aviso» que el
+            // asistente ya le prometió, así que lo primero que tiene que decir
+            // es que el pago llegó: eso es lo que la paciente está esperando.
+            $confirmada => "¡Hola {$nombre}! 👋 Confirmamos tu pago ✅ Tu cita queda confirmada para el {$cuando} en {$clinica}. "
+                .'Si necesitas reprogramarla, respóndenos por este chat.',
+            default => "¡Hola {$nombre}! 👋 Tu cita quedó agendada para el {$cuando} en {$clinica}. "
+                .'Si necesitas reprogramarla, respóndenos por este chat.',
+        };
 
         // La conversación decide si se puede escribir texto libre.
         $conversacion = $appointment->lead
@@ -357,7 +369,13 @@ class AppointmentController extends Controller
             'content' => $texto,
         ]);
 
-        return ($reprogramada ? ' Se le avisó del cambio por WhatsApp' : ' Se le avisó por WhatsApp').$via.'.';
+        $hecho = match (true) {
+            $reprogramada => ' Se le avisó del cambio por WhatsApp',
+            $confirmada => ' Se le confirmó el pago y la cita por WhatsApp',
+            default => ' Se le avisó por WhatsApp',
+        };
+
+        return $hecho.$via.'.';
     }
 
     /**
@@ -517,16 +535,31 @@ class AppointmentController extends Controller
             return back()->with('success', 'Esa cita no tenía ninguna transferencia pendiente.');
         }
 
-        $appointment->forceFill(['transfer_pending_at' => null])->save();
+        $appointment->forceFill([
+            'transfer_pending_at' => null,
+            // La cita deja de estar «apartada a la espera del pago» y pasa a
+            // estar confirmada de verdad. `confirmed` cuenta igual que
+            // `scheduled` en agenda, recordatorios y disponibilidad, así que
+            // esto solo cambia lo que se lee en pantalla.
+            'status' => $appointment->status === 'scheduled' ? 'confirmed' : $appointment->status,
+        ])->save();
 
         $this->syncToGoogle($appointment);
 
+        // ESTO ES LO QUE FALTABA. El asistente le promete a la paciente «apenas
+        // se refleje el pago te confirmo la cita», y al verificar la
+        // transferencia aquí no salía absolutamente nada: la doctora tenía que
+        // escribirle a mano, sin saber siquiera que el sistema no lo había
+        // hecho. Se avisa por los dos canales, igual que al agendar.
+        $aviso = $this->avisarPaciente($appointment, 'confirmada')
+            .$this->avisarPacientePorCorreo($appointment, 'confirmada');
+
         return back()->with('success', 'Transferencia verificada: la cita de '
-            .$appointment->patient_name.' queda confirmada.');
+            .$appointment->patient_name.' queda confirmada.'.$aviso);
     }
 
     private function authorizeAppointment(Request $request, Appointment $appointment): void
     {
-        abort_unless($appointment->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($appointment), 403);
     }
 }

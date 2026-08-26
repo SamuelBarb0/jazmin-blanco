@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Services\WhatsAppService;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -35,6 +36,7 @@ class InboxController extends Controller
     public function index(Request $request, ?Conversation $conversation = null): Response
     {
         $user = $request->user();
+        $q = trim((string) $request->query('q', ''));
 
         $conversations = $user->conversations()
             // Va ANTES de los withMax: `select()` reemplaza la lista de
@@ -55,8 +57,24 @@ class InboxController extends Controller
                 ->latest('id')
                 ->limit(1),
             ])
+            // Quién habló de último. Con esto la bandeja puede señalar los
+            // chats donde la paciente escribió y NADIE le contestó, que es la
+            // situación que se coló durante días sin que nadie la viera.
+            ->addSelect(['last_role' => Message::select('role')
+                ->whereColumn('conversation_id', 'conversations.id')
+                ->latest('id')
+                ->limit(1),
+            ])
             ->orderByDesc('last_message_at')
-            ->get()
+            ->get();
+
+        $total = $conversations->count();
+
+        if ($q !== '') {
+            $conversations = $this->buscar($conversations, $q);
+        }
+
+        $conversations = $conversations
             ->map(fn (Conversation $c) => [
                 'id' => $c->id,
                 'title' => $c->title ?: ($c->lead?->name ?: 'Sin nombre'),
@@ -67,18 +85,25 @@ class InboxController extends Controller
                 'last_message_at' => $c->last_message_at,
                 'last_message_id' => $c->last_message_id,
                 'preview' => $c->preview,
+                // Con el asistente activo esto dura los segundos que tarda en
+                // responder, así que solo se marca donde está en pausa: ahí es
+                // donde el mensaje se queda esperando de verdad.
+                'sin_responder' => ! $c->bot_enabled && $c->last_role === 'user',
             ]);
 
         // Por defecto se abre la conversación más reciente, que en pantalla
         // grande evita el panel vacío. En celular NO sirve: como solo cabe una
         // columna, abrir un chat solo deja la lista inalcanzable y el botón de
         // volver rebotaría al mismo chat. Por eso el volver pide `?lista=1`.
-        if ($conversation?->exists && $conversation->user_id !== $user->id) {
+        if ($conversation?->exists && ! $user->esDeSuCuenta($conversation)) {
             abort(403);
         }
         $selected = $conversation?->exists
             ? $conversation
-            : ($request->boolean('lista')
+            // Buscando NO se abre nada solo: el relleno de escritorio traería
+            // el chat más reciente de la clínica, que casi nunca es el que se
+            // está buscando, y taparía el resultado con otra conversación.
+            : ($request->boolean('lista') || $q !== ''
                 ? null
                 : $user->conversations()->where('channel', '!=', 'panel')
                     ->withMax('messages as last_message_at', 'created_at')
@@ -87,6 +112,8 @@ class InboxController extends Controller
 
         return Inertia::render('inbox/index', [
             'conversations' => $conversations,
+            'q' => $q,
+            'total' => $total,
             'selected' => $selected ? $this->serialize($selected) : null,
             // El servidor no sabe el tamaño de la pantalla, así que en vez de
             // decidir por el viewport le dice al front CÓMO se eligió el chat:
@@ -94,6 +121,77 @@ class InboxController extends Controller
             // celular ese relleno se oculta por CSS y se ve la lista.
             'auto_selected' => $selected !== null && ! $conversation?->exists,
         ]);
+    }
+
+    /**
+     * Filtra la bandeja por nombre, teléfono o texto de los mensajes.
+     *
+     * Existe porque la lista solo se podía recorrer en orden de última
+     * actividad: con 300 chats, encontrar a una paciente concreta —o el número
+     * desde el que escribió— era bajar a ciegas, y la doctora acababa
+     * buscándola en su celular en vez de en el CRM.
+     *
+     * Se filtra en PHP y no en SQL por lo mismo que en el resto del sistema: el
+     * teléfono está guardado de cualquier forma (con indicativo y sin él, con
+     * espacios), así que un `like` sobre la columna se pierde la mitad. El
+     * texto de los mensajes sí va en SQL, que ahí sí son decenas de miles de
+     * filas y no tiene sentido traerlas.
+     *
+     * @param  Collection<int,Conversation>  $conversations
+     * @return Collection<int,Conversation>
+     */
+    private function buscar(Collection $conversations, string $q): Collection
+    {
+        $aguja = $this->normalizar($q);
+        $digitos = $this->soloDigitos($q);
+
+        // Con una o dos letras coincide medio listado y el buscador no ayuda;
+        // el filtro por nombre sí se hace desde la primera, que es lo que se
+        // espera al teclear.
+        $porTexto = mb_strlen($aguja) >= 3
+            ? Message::whereIn('conversation_id', $conversations->pluck('id'))
+                ->where('content', 'like', '%'.$q.'%')
+                ->distinct()
+                ->pluck('conversation_id')
+                ->flip()
+            : collect();
+
+        return $conversations->filter(function (Conversation $c) use ($aguja, $digitos, $porTexto) {
+            if ($aguja !== '' && str_contains($this->normalizar($c->title.' '.$c->lead?->name), $aguja)) {
+                return true;
+            }
+
+            // Se comparan solo los dígitos y recortados a los últimos diez —el
+            // mismo criterio que `Settings::phoneInList()`—, porque en
+            // producción el mismo número está guardado a diez cifras y con el
+            // 57 delante. Así encontrarla escribiendo los últimos cuatro, el
+            // número a diez cifras o el completo con indicativo da igual.
+            $telefono = $this->soloDigitos((string) $c->lead?->phone);
+            if (strlen($digitos) >= 3 && $telefono !== '' && str_contains($telefono, $digitos)) {
+                return true;
+            }
+
+            return $porTexto->has($c->id);
+        })->values();
+    }
+
+    /**
+     * Los dígitos de un teléfono, recortados a los últimos diez.
+     *
+     * El indicativo sobra para comparar: `573001112233` y `3001112233` son la
+     * misma paciente, y en la base están las dos formas.
+     */
+    private function soloDigitos(string $texto): string
+    {
+        $digitos = (string) preg_replace('/\D/', '', $texto);
+
+        return strlen($digitos) > 10 ? substr($digitos, -10) : $digitos;
+    }
+
+    /** Minúsculas y sin tildes, para que «Jazmín» y «jazmin» sean lo mismo. */
+    private function normalizar(?string $texto): string
+    {
+        return Str::lower(Str::ascii(trim((string) $texto)));
     }
 
     /** Pausa o reanuda al asistente en una conversación. */
@@ -106,6 +204,9 @@ class InboxController extends Controller
         $conversation->forceFill([
             'bot_enabled' => $activar,
             'bot_paused_at' => $activar ? null : now(),
+            // El botón es una DECISIÓN: esta pausa no caduca sola, a diferencia
+            // de la que se pone al escribir a mano. Ver `debeReanudarAlAsistente()`.
+            'bot_paused_manually' => ! $activar,
             // Tocar el interruptor ya es haberse enterado del chat: la alerta de
             // "esperando a una persona" se apaga.
             'escalated_at' => null,
@@ -192,7 +293,14 @@ class InboxController extends Controller
         // activo, se pausa solo para que no responda encima. Y si el chat estaba
         // esperando a una persona, ya la tuvo: se apaga la alerta.
         if ($conversation->bot_enabled) {
-            $conversation->forceFill(['bot_enabled' => false, 'bot_paused_at' => now()])->save();
+            // Pausa automática, no decidida: caduca cuando el chat lleve horas
+            // quieto, para que la paciente no se quede sin respuesta la próxima
+            // vez que escriba. La del botón sí se queda puesta.
+            $conversation->forceFill([
+                'bot_enabled' => false,
+                'bot_paused_at' => now(),
+                'bot_paused_manually' => false,
+            ])->save();
         }
 
         if ($conversation->needsHuman()) {
@@ -252,6 +360,6 @@ class InboxController extends Controller
 
     private function authorizeConversation(Request $request, Conversation $conversation): void
     {
-        abort_unless($conversation->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($conversation), 403);
     }
 }

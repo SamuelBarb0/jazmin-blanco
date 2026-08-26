@@ -209,6 +209,6 @@ class ServiceController extends Controller
 
     private function authorizeService(Request $request, Service $service): void
     {
-        abort_unless($service->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($service), 403);
     }
 }

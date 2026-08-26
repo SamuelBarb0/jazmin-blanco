@@ -81,11 +81,11 @@ class CampaignMediaController extends Controller
 
     private function authorizeCampaign(Request $request, Campaign $campaign): void
     {
-        abort_unless($campaign->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($campaign), 403);
     }
 
     private function authorizeMedia(Request $request, CampaignMedia $medium): void
     {
-        abort_unless($medium->user_id === $request->user()->id, 403);
+        abort_unless($request->user()->esDeSuCuenta($medium), 403);
     }
 }
