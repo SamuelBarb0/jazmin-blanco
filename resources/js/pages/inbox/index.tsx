@@ -3,7 +3,22 @@ import AppLayout from '@/layouts/app-layout';
 import { cn } from '@/lib/utils';
 import { type BreadcrumbItem, type SharedData } from '@/types';
 import { Head, router, useForm, usePage } from '@inertiajs/react';
-import { AlertTriangle, Bot, ChevronLeft, Clock, FileText, HandHelping, MessageCircle, Paperclip, Pause, Play, Search, SendHorizonal, User, X } from 'lucide-react';
+import {
+    AlertTriangle,
+    Bot,
+    ChevronLeft,
+    Clock,
+    FileText,
+    HandHelping,
+    MessageCircle,
+    Paperclip,
+    Pause,
+    Play,
+    Search,
+    SendHorizonal,
+    User,
+    X,
+} from 'lucide-react';
 import { motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -72,8 +87,7 @@ const hace = (iso: string | null): string => {
     return d === 1 ? 'ayer' : `hace ${d} días`;
 };
 
-const hora = (iso: string | null): string =>
-    iso ? new Date(iso).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }) : '';
+const hora = (iso: string | null): string => (iso ? new Date(iso).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }) : '');
 
 export default function Inbox({
     conversations,
@@ -114,18 +128,44 @@ export default function Inbox({
         if (busqueda === q) return;
 
         const id = setTimeout(() => {
-            router.get(
-                route('inbox.index'),
-                busqueda.trim() ? { q: busqueda.trim() } : {},
-                { preserveState: true, preserveScroll: true, replace: true, only: ['conversations', 'q', 'total', 'selected', 'auto_selected'] },
-            );
+            router.get(route('inbox.index'), busqueda.trim() ? { q: busqueda.trim() } : {}, {
+                preserveState: true,
+                preserveScroll: true,
+                replace: true,
+                only: ['conversations', 'q', 'total', 'selected', 'auto_selected'],
+            });
         }, 350);
 
         return () => clearTimeout(id);
     }, [busqueda, q]);
 
+    // Bajar solo si ya estaba abajo. Antes bajaba SIEMPRE que cambiaba el número
+    // de mensajes, así que leer el historial de un chat en el computador era
+    // imposible: a los pocos segundos entraba un mensaje y la tiraba al final.
+    // En el celular no se notaba porque ahí no se lee historial.
+    const pegadoAbajo = useRef(true);
+    const chatAnterior = useRef<number | null>(null);
+
+    const alHacerScroll = () => {
+        const el = scrollRef.current;
+        if (!el) return;
+        // 80 px de margen: pegado del todo casi nunca lo está, entre el rebote
+        // del navegador y el alto de la última burbuja.
+        pegadoAbajo.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    };
+
     useEffect(() => {
-        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+        const el = scrollRef.current;
+        if (!el) return;
+
+        // Abrir otro chat sí empieza abajo, que es lo último que se habló.
+        const cambioDeChat = chatAnterior.current !== (selected?.id ?? null);
+        chatAnterior.current = selected?.id ?? null;
+        if (cambioDeChat) pegadoAbajo.current = true;
+
+        if (cambioDeChat || pegadoAbajo.current) {
+            el.scrollTo({ top: el.scrollHeight });
+        }
     }, [selected?.id, selected?.messages.length]);
 
     // La bandeja se refresca sola: no hay tiempo real (ni websockets), pero una
@@ -174,6 +214,13 @@ export default function Inbox({
         recargando.current = true;
         router.reload({
             only: ['selected'],
+            // Con el chat de relleno la URL es `/inbox` a secas, así que el
+            // servidor volvía a elegir «el más reciente» en cada recarga y el
+            // panel se cambiaba solo si mientras tanto escribía otra paciente.
+            // Se le dice cuál está en pantalla; `preserveUrl` para no ensuciar
+            // la barra de direcciones con el id.
+            data: autoSelected ? { abierta: selected.id } : {},
+            preserveUrl: true,
             onFinish: () => {
                 recargando.current = false;
             },
@@ -220,33 +267,35 @@ export default function Inbox({
                 dentro en vez de estirar la página. */}
             <div className="flex min-h-0 flex-1 gap-4 p-2 md:p-4">
                 {/* ── Lista de chats ─────────────────────────────── */}
-                <aside
-                    className={cn(
-                        'glass w-full shrink-0 flex-col overflow-hidden rounded-xl md:flex md:w-80',
-                        listaEnMovil ? 'flex' : 'hidden',
-                    )}
-                >
-                    <header className="border-b border-border/60 px-4 py-3">
+                <aside className={cn('glass w-full shrink-0 flex-col overflow-hidden rounded-xl md:flex md:w-80', listaEnMovil ? 'flex' : 'hidden')}>
+                    <header className="border-border/60 border-b px-4 py-3">
                         <h2 className="font-display text-lg">Conversaciones</h2>
-                        <p className="text-xs text-muted-foreground">
-                            {q ? `${conversations.length} de ${total} chats` : `${conversations.length} chats de WhatsApp`}
+                        <p className="text-muted-foreground text-xs">
+                            {/* Sin buscar solo llegan las más recientes (más las
+                                que piden atención): decirlo evita que parezca
+                                que se perdieron chats. */}
+                            {q
+                                ? `${conversations.length} de ${total} chats`
+                                : conversations.length < total
+                                  ? `${conversations.length} de ${total} chats — busca para ver los demás`
+                                  : `${conversations.length} chats de WhatsApp`}
                         </p>
 
                         <div className="relative mt-2">
-                            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
                             <input
                                 type="search"
                                 value={busqueda}
                                 onChange={(e) => setBusqueda(e.target.value)}
                                 placeholder="Buscar por nombre, número o mensaje…"
                                 // Se oculta la «x» propia del navegador: con la nuestra al lado salían dos.
-                                className="w-full rounded-lg border border-border/60 bg-background/60 py-1.5 pr-7 pl-8 text-xs outline-none focus:border-primary/40 [&::-webkit-search-cancel-button]:hidden"
+                                className="border-border/60 bg-background/60 focus:border-primary/40 w-full rounded-lg border py-1.5 pr-7 pl-8 text-xs outline-none [&::-webkit-search-cancel-button]:hidden"
                             />
                             {busqueda !== '' && (
                                 <button
                                     type="button"
                                     onClick={() => setBusqueda('')}
-                                    className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
                                     aria-label="Limpiar la búsqueda"
                                 >
                                     <X className="size-3.5" />
@@ -277,7 +326,7 @@ export default function Inbox({
 
                     <div className="flex-1 overflow-y-auto">
                         {conversations.length === 0 && (
-                            <p className="p-4 text-sm text-muted-foreground">
+                            <p className="text-muted-foreground p-4 text-sm">
                                 {q
                                     ? `Ningún chat coincide con «${q}». Se busca por nombre, por número (bastan los últimos dígitos) y dentro de los mensajes.`
                                     : 'Todavía no hay conversaciones. Aparecerán aquí en cuanto una paciente escriba por WhatsApp.'}
@@ -292,20 +341,20 @@ export default function Inbox({
                                 // teclear el número otra vez.
                                 onClick={() => router.get(route('inbox.show', c.id), q ? { q } : {}, { preserveState: true })}
                                 className={cn(
-                                    'flex w-full flex-col gap-1 border-b border-border/40 px-4 py-3 text-left transition hover:bg-muted/50',
+                                    'border-border/40 hover:bg-muted/50 flex w-full flex-col gap-1 border-b px-4 py-3 text-left transition',
                                     selected?.id === c.id && 'bg-muted',
                                 )}
                             >
                                 <div className="flex items-center justify-between gap-2">
                                     <span className="truncate text-sm font-medium">{c.lead?.name || c.title}</span>
-                                    <span className="shrink-0 text-[11px] text-muted-foreground">{hace(c.last_message_at)}</span>
+                                    <span className="text-muted-foreground shrink-0 text-[11px]">{hace(c.last_message_at)}</span>
                                 </div>
                                 {/* El número, a la vista: es por lo que la
                                     doctora identifica a una paciente cuando el
                                     nombre viene del perfil de WhatsApp y no
                                     coincide con el de la historia. */}
-                                {c.lead?.phone && <span className="truncate text-[11px] text-muted-foreground/80">{c.lead.phone}</span>}
-                                <span className="truncate text-xs text-muted-foreground">{c.preview || 'Sin mensajes'}</span>
+                                {c.lead?.phone && <span className="text-muted-foreground/80 truncate text-[11px]">{c.lead.phone}</span>}
+                                <span className="text-muted-foreground truncate text-xs">{c.preview || 'Sin mensajes'}</span>
                                 {/* Escalado y en pausa no son lo mismo: uno es una
                                     alerta por atender, el otro una decisión de la
                                     doctora. Si están los dos, manda la alerta. */}
@@ -331,35 +380,30 @@ export default function Inbox({
                 </aside>
 
                 {/* ── Chat ───────────────────────────────────────── */}
-                <section
-                    className={cn(
-                        'glass flex-1 flex-col overflow-hidden rounded-xl md:flex',
-                        selected && !listaEnMovil ? 'flex' : 'hidden',
-                    )}
-                >
+                <section className={cn('glass flex-1 flex-col overflow-hidden rounded-xl md:flex', selected && !listaEnMovil ? 'flex' : 'hidden')}>
                     {!selected && (
-                        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                        <div className="text-muted-foreground flex flex-1 items-center justify-center text-sm">
                             <MessageCircle className="mr-2 size-4" /> Elige una conversación
                         </div>
                     )}
 
                     {selected && (
                         <>
-                            <header className="flex items-center justify-between gap-3 border-b border-border/60 px-3 py-3 md:px-5">
+                            <header className="border-border/60 flex items-center justify-between gap-3 border-b px-3 py-3 md:px-5">
                                 {/* Volver a la lista: solo hace falta en celular,
                                     donde la lista está oculta. */}
                                 <button
                                     type="button"
                                     onClick={() => router.get(route('inbox.index'), q ? { lista: 1, q } : { lista: 1 }, { preserveState: true })}
-                                    className="-ml-1 shrink-0 rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground md:hidden"
+                                    className="text-muted-foreground hover:bg-muted hover:text-foreground -ml-1 shrink-0 rounded-lg p-1.5 md:hidden"
                                     aria-label="Volver a las conversaciones"
                                 >
                                     <ChevronLeft className="size-5" />
                                 </button>
 
                                 <div className="min-w-0 flex-1">
-                                    <h2 className="truncate font-display text-lg">{selected.lead?.name || selected.title}</h2>
-                                    <p className="text-xs text-muted-foreground">{selected.lead?.phone || 'Sin teléfono'}</p>
+                                    <h2 className="font-display truncate text-lg">{selected.lead?.name || selected.title}</h2>
+                                    <p className="text-muted-foreground text-xs">{selected.lead?.phone || 'Sin teléfono'}</p>
                                 </div>
 
                                 {/* En celular el botón se queda en el icono: el
@@ -403,9 +447,9 @@ export default function Inbox({
                                 )
                             )}
 
-                            <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-4 md:px-5">
+                            <div ref={scrollRef} onScroll={alHacerScroll} className="flex-1 space-y-3 overflow-y-auto px-3 py-4 md:px-5">
                                 {selected.older_count > 0 && (
-                                    <p className="text-center text-[11px] text-muted-foreground">
+                                    <p className="text-muted-foreground text-center text-[11px]">
                                         Hay {selected.older_count} mensaje{selected.older_count === 1 ? '' : 's'} anterior
                                         {selected.older_count === 1 ? '' : 'es'} en esta conversación.
                                     </p>
@@ -461,7 +505,9 @@ export default function Inbox({
                                                     ) : null,
                                                 )}
 
-                                                <div className={cn('flex items-center gap-1 text-[10px] text-muted-foreground', mio && 'justify-end')}>
+                                                <div
+                                                    className={cn('text-muted-foreground flex items-center gap-1 text-[10px]', mio && 'justify-end')}
+                                                >
                                                     {mio &&
                                                         (m.sent_by === 'human' ? (
                                                             <>
@@ -481,9 +527,9 @@ export default function Inbox({
                             </div>
 
                             {/* ── Responder ──────────────────────────── */}
-                            <footer className="border-t border-border/60 px-3 py-3 md:px-5">
+                            <footer className="border-border/60 border-t px-3 py-3 md:px-5">
                                 {flash?.error && (
-                                    <div className="mb-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                                    <div className="border-destructive/30 bg-destructive/10 text-destructive mb-2 rounded-lg border px-3 py-2 text-xs">
                                         {flash.error}
                                     </div>
                                 )}
@@ -499,15 +545,11 @@ export default function Inbox({
                                 )}
 
                                 {data.archivo && (
-                                    <div className="mb-2 flex items-center gap-2 rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-xs">
+                                    <div className="border-border/60 bg-background/60 mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
                                         {data.archivo.type.startsWith('video/') ? (
-                                            <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                                            <FileText className="text-muted-foreground size-3.5 shrink-0" />
                                         ) : (
-                                            <img
-                                                src={URL.createObjectURL(data.archivo)}
-                                                alt=""
-                                                className="size-9 shrink-0 rounded object-cover"
-                                            />
+                                            <img src={URL.createObjectURL(data.archivo)} alt="" className="size-9 shrink-0 rounded object-cover" />
                                         )}
                                         <span className="flex-1 truncate">{data.archivo.name}</span>
                                         <button type="button" onClick={quitarArchivo} className="text-muted-foreground hover:text-foreground">
@@ -552,7 +594,7 @@ export default function Inbox({
                                                     : 'Escribe tu respuesta… (Enter para enviar)'
                                                 : 'No se puede escribir ahora'
                                         }
-                                        className="max-h-32 flex-1 resize-none rounded-xl border border-border/60 bg-background/60 px-4 py-2.5 text-sm outline-none focus:border-primary/40 disabled:opacity-50"
+                                        className="border-border/60 bg-background/60 focus:border-primary/40 max-h-32 flex-1 resize-none rounded-xl border px-4 py-2.5 text-sm outline-none disabled:opacity-50"
                                     />
                                     <Button
                                         type="submit"
@@ -564,7 +606,7 @@ export default function Inbox({
                                 </form>
 
                                 {selected.bot_enabled && puedeEscribir && (
-                                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                                    <p className="text-muted-foreground mt-1.5 text-[11px]">
                                         Si escribes, Lore se pausa automáticamente en este chat para no responder encima.
                                     </p>
                                 )}

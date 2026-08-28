@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Models\User;
 use App\Services\WhatsAppService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\RedirectResponse;
@@ -32,6 +33,20 @@ class InboxController extends Controller
      * CRM, esto se convierte en "cargar mensajes anteriores".
      */
     private const MAX_MENSAJES = 100;
+
+    /**
+     * Cuántas conversaciones se le mandan al navegador sin buscar.
+     *
+     * La lista entera son 332 chats y 242 KB de JSON, y la bandeja la reenvía
+     * COMPLETA cada 5 segundos: unos 170 MB por hora de pestaña abierta, que en
+     * el celular de la doctora se pagan en datos. Es el mismo problema que ya se
+     * arregló en el panel del chat con `MAX_MENSAJES`; la lista se quedó sin
+     * recortar y encima crece con cada paciente nueva.
+     *
+     * Lo que no cabe no se pierde: el buscador sigue mirando las 332, y las que
+     * piden atención entran siempre (ver `recortar()`).
+     */
+    private const MAX_LISTA = 50;
 
     public function index(Request $request, ?Conversation $conversation = null): Response
     {
@@ -70,9 +85,9 @@ class InboxController extends Controller
 
         $total = $conversations->count();
 
-        if ($q !== '') {
-            $conversations = $this->buscar($conversations, $q);
-        }
+        $conversations = $q !== ''
+            ? $this->buscar($conversations, $q)
+            : $this->recortar($conversations);
 
         $conversations = $conversations
             ->map(fn (Conversation $c) => [
@@ -84,7 +99,10 @@ class InboxController extends Controller
                 'needs_human' => $c->needsHuman(),
                 'last_message_at' => $c->last_message_at,
                 'last_message_id' => $c->last_message_id,
-                'preview' => $c->preview,
+                // La fila la recorta el CSS a una línea, así que mandar el
+                // mensaje entero es pagar datos por texto que nadie ve. Con 332
+                // chats, esto solo es la mitad del peso de la lista.
+                'preview' => $c->preview ? Str::limit($c->preview, 120) : null,
                 // Con el asistente activo esto dura los segundos que tarda en
                 // responder, así que solo se marca donde está en pausa: ahí es
                 // donde el mensaje se queda esperando de verdad.
@@ -105,10 +123,7 @@ class InboxController extends Controller
             // está buscando, y taparía el resultado con otra conversación.
             : ($request->boolean('lista') || $q !== ''
                 ? null
-                : $user->conversations()->where('channel', '!=', 'panel')
-                    ->withMax('messages as last_message_at', 'created_at')
-                    ->orderByDesc('last_message_at')
-                    ->first());
+                : $this->relleno($user, (int) $request->query('abierta', 0)));
 
         return Inertia::render('inbox/index', [
             'conversations' => $conversations,
@@ -121,6 +136,49 @@ class InboxController extends Controller
             // celular ese relleno se oculta por CSS y se ve la lista.
             'auto_selected' => $selected !== null && ! $conversation?->exists,
         ]);
+    }
+
+    /**
+     * El chat que se abre solo en pantalla grande para no dejar el panel vacío.
+     *
+     * `$abierta` es el que el navegador YA tiene delante. Sin ese dato, cada
+     * recarga del chat volvía a elegir «el más reciente de la clínica»: si
+     * mientras tanto escribía otra paciente, el panel se le cambiaba debajo a la
+     * doctora, que podía acabar leyendo —o escribiendo— en la conversación
+     * equivocada. Solo pasaba con el relleno, porque al abrir un chat a mano el
+     * id va en la URL y ya no hay nada que adivinar.
+     */
+    private function relleno(User $user, int $abierta): ?Conversation
+    {
+        $deLaClinica = fn () => $user->conversations()->where('channel', '!=', 'panel');
+
+        return ($abierta > 0 ? $deLaClinica()->whereKey($abierta)->first() : null)
+            ?? $deLaClinica()
+                ->withMax('messages as last_message_at', 'created_at')
+                ->orderByDesc('last_message_at')
+                ->first();
+    }
+
+    /**
+     * Las más recientes, más TODAS las que piden atención.
+     *
+     * Recortar a secas escondería justo lo que hay que ver: un chat escalado o
+     * una paciente sin responder puede llevar días quieto y caer en la posición
+     * 80. Y los dos contadores de la cabecera se calculan en el navegador sobre
+     * lo que le llega, así que truncar la lista los dejaría mintiendo.
+     *
+     * @param  Collection<int,Conversation>  $conversations  Ya ordenadas por actividad.
+     * @return Collection<int,Conversation>
+     */
+    private function recortar(Collection $conversations): Collection
+    {
+        $recientes = $conversations->take(self::MAX_LISTA)->pluck('id')->flip();
+
+        return $conversations
+            ->filter(fn (Conversation $c) => $recientes->has($c->id)
+                || $c->needsHuman()
+                || (! $c->bot_enabled && $c->last_role === 'user'))
+            ->values();
     }
 
     /**
