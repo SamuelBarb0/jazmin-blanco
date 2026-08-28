@@ -61,6 +61,22 @@ Schedule::command('conversations:send-reactivation')
     ->withoutOverlapping();
 
 /*
+ * Reanudar los chats cuya pausa automática ya caducó.
+ *
+ * La reanudación existía desde el 26-ago, pero colgaba del mensaje ENTRANTE:
+ * solo se evaluaba cuando la paciente volvía a escribir. Quien escribía una vez
+ * y no insistía se quedaba mudo para siempre. Esto la saca de ahí y la mira cada
+ * hora, se escriba o no.
+ *
+ * Cada hora y no cada minuto porque el umbral son horas de silencio: bajar la
+ * frecuencia no adelanta nada y solo multiplica las corridas en vacío. Como el
+ * umbral se mide contra "ahora", una corrida perdida la recupera la siguiente.
+ */
+Schedule::command('conversations:resume-paused')
+    ->hourly()
+    ->withoutOverlapping();
+
+/*
  * Resumen diario del estado del sistema.
  *
  * A las 7 de la mañana, antes de que abra el consultorio: si algo se rompió de
