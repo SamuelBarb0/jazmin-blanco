@@ -225,7 +225,11 @@ class ResumePausedConversations extends Command
 
         $this->newLine();
         $this->info($dry
-            ? "Simulación: {$reanudados} chats se reanudarían y {$respondidos} recibirían respuesta."
+            ? sprintf(
+                'Simulación: %d %s se reanudarían y %d %s respuesta.',
+                $reanudados, $reanudados === 1 ? 'chat' : 'chats',
+                $respondidos, $respondidos === 1 ? 'recibiría' : 'recibirían',
+            )
             : "Reanudados: {$reanudados} · respondidos: {$respondidos}");
 
         if ($aplazados) {
