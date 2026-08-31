@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\MediaParaWhatsApp;
 use App\Models\Campaign;
 use App\Models\CampaignMedia;
-use App\Services\WhatsAppService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -12,6 +12,8 @@ use Illuminate\Validation\Rule;
 
 class CampaignMediaController extends Controller
 {
+    use MediaParaWhatsApp;
+
     /**
      * Sube un archivo (foto/video) o registra una URL externa para la campaña.
      */
@@ -24,7 +26,7 @@ class CampaignMediaController extends Controller
         $data = $request->validate([
             'type' => ['required', Rule::in(['image', 'video'])],
             'caption' => ['nullable', 'string', 'max:500'],
-            'file' => ['nullable', 'required_without:url', 'file', $this->sizeRule($tipo), $this->mimeRule($request)],
+            'file' => $this->reglasDelArchivo($tipo),
             'url' => ['nullable', 'required_without:file', 'url', 'max:2048'],
         ], [
             'file.max' => $this->mensajeDeTamano($tipo),
@@ -43,7 +45,11 @@ class CampaignMediaController extends Controller
             $payload['url'] = $data['url'];
         }
 
-        $campaign->media()->create($payload);
+        $medio = $campaign->media()->create($payload);
+
+        // Si se pasa del tope de WhatsApp, la cola lo deja a medida sin que la
+        // doctora tenga que hacer nada; ver CompressUploadedVideo.
+        $this->optimizarSiHaceFalta($medio);
 
         return back()->with('success', 'Material agregado a la campaña.');
     }
@@ -72,37 +78,6 @@ class CampaignMediaController extends Controller
         $medium->delete();
 
         return back()->with('success', 'Material eliminado.');
-    }
-
-    /**
-     * Limita las extensiones según el tipo declarado.
-     */
-    private function mimeRule(Request $request): string
-    {
-        return $request->input('type') === 'video'
-            ? 'mimes:mp4,webm,mov,ogg'
-            : 'mimes:jpg,jpeg,png,webp,gif';
-    }
-
-    /**
-     * Tope de peso según el tipo, en kilobytes.
-     *
-     * Ver la nota de `ServiceMediaController::sizeRule()`: el `max:51200` (50
-     * MB) que había aquí acepta archivos que WhatsApp rechaza después, cuando
-     * ya es tarde para avisar a quien los subió.
-     */
-    private function sizeRule(string $tipo): string
-    {
-        return 'max:'.intdiv(WhatsAppService::limiteBytes($tipo), 1024);
-    }
-
-    private function mensajeDeTamano(string $tipo): string
-    {
-        return sprintf(
-            'WhatsApp no acepta %s de más de %d MB, así que este archivo nunca le llegaría a la paciente. Súbelo comprimido.',
-            $tipo === 'video' ? 'videos' : 'imágenes',
-            WhatsAppService::limiteMb($tipo),
-        );
     }
 
     private function authorizeCampaign(Request $request, Campaign $campaign): void
