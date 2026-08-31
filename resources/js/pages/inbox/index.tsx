@@ -412,7 +412,18 @@ export default function Inbox({
                                     variant={selected.bot_enabled ? 'outline' : 'default'}
                                     size="sm"
                                     className="shrink-0"
-                                    onClick={() => router.patch(route('inbox.toggle', selected.id), {}, { preserveScroll: true })}
+                                    // `preserveState` NO es opcional: sin él, Inertia
+                                    // remonta la página y el `useForm` del compositor
+                                    // vuelve a nacer vacío. La doctora escribía el
+                                    // mensaje, pulsaba «Pausar a Lore» —lo lógico antes
+                                    // de contestar ella— y el texto desaparecía sin
+                                    // avisar; luego el botón de enviar salía deshabilitado
+                                    // porque ya no había nada que mandar. Si pausaba
+                                    // ANTES de escribir funcionaba, de ahí el «a veces
+                                    // sí y a veces no».
+                                    onClick={() =>
+                                        router.patch(route('inbox.toggle', selected.id), {}, { preserveScroll: true, preserveState: true })
+                                    }
                                 >
                                     {selected.bot_enabled ? (
                                         <>

@@ -271,9 +271,27 @@ class InboxController extends Controller
             'escalation_reason' => null,
         ])->save();
 
-        return back()->with('success', $activar
+        // Al chat SOBRE EL QUE SE ACTUÓ, no a `back()`.
+        //
+        // Con el relleno de escritorio la URL es `/inbox` sin id, así que
+        // `back()` devolvía ahí y el servidor volvía a elegir «el más reciente
+        // de la clínica». Si mientras tanto escribía otra paciente, la doctora
+        // pausaba a Lore en un chat y se encontraba en otro —con la caja gris,
+        // porque el 91% tiene la ventana de 24h cerrada—. En el celular casi no
+        // pasaba: ahí el relleno se oculta y el id siempre va en la URL.
+        return $this->deVuelta($conversation)->with('success', $activar
             ? 'El asistente vuelve a responder en este chat.'
             : 'Asistente pausado. A partir de ahora respondes tú en este chat.');
+    }
+
+    /**
+     * Devuelve a la conversación sobre la que se acaba de actuar, dejando el id
+     * en la URL para que ni el refresco de cada 5 s ni un mensaje de otra
+     * paciente puedan cambiarla de debajo.
+     */
+    private function deVuelta(Conversation $conversation): RedirectResponse
+    {
+        return redirect()->route('inbox.show', $conversation);
     }
 
     /** Envía un mensaje escrito por la doctora al número de la paciente. */
@@ -304,16 +322,16 @@ class InboxController extends Controller
         $adjunto = $request->file('archivo');
 
         if ($texto === '' && ! $adjunto) {
-            return back()->with('error', 'Escribe un mensaje o adjunta una imagen.');
+            return $this->deVuelta($conversation)->with('error', 'Escribe un mensaje o adjunta una imagen.');
         }
 
         $telefono = $conversation->lead?->phone;
         if (blank($telefono)) {
-            return back()->with('error', 'Esta paciente no tiene teléfono registrado, no se le puede escribir.');
+            return $this->deVuelta($conversation)->with('error', 'Esta paciente no tiene teléfono registrado, no se le puede escribir.');
         }
 
         if (! $conversation->windowIsOpen()) {
-            return back()->with('error', 'Pasaron más de 24 horas desde el último mensaje de la paciente. WhatsApp no permite escribirle texto libre hasta que ella vuelva a escribir.');
+            return $this->deVuelta($conversation)->with('error', 'Pasaron más de 24 horas desde el último mensaje de la paciente. WhatsApp no permite escribirle texto libre hasta que ella vuelva a escribir.');
         }
 
         $whatsapp = WhatsAppService::fromConfig();
@@ -344,7 +362,7 @@ class InboxController extends Controller
         }
 
         if (! $enviado) {
-            return back()->with('error', 'No se pudo enviar el mensaje por WhatsApp. Revisa la conexión del número.');
+            return $this->deVuelta($conversation)->with('error', 'No se pudo enviar el mensaje por WhatsApp. Revisa la conexión del número.');
         }
 
         $conversation->messages()->create([
@@ -376,7 +394,7 @@ class InboxController extends Controller
             $conversation->forceFill(['escalated_at' => null, 'escalation_reason' => null])->save();
         }
 
-        return back();
+        return $this->deVuelta($conversation);
     }
 
     /**
