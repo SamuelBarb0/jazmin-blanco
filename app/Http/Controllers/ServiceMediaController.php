@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Service;
 use App\Models\ServiceMedia;
+use App\Services\WhatsAppService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -18,11 +19,15 @@ class ServiceMediaController extends Controller
     {
         $this->authorizeService($request, $service);
 
+        $tipo = $request->input('type') === 'video' ? 'video' : 'image';
+
         $data = $request->validate([
             'type' => ['required', Rule::in(['image', 'video'])],
             'caption' => ['nullable', 'string', 'max:500'],
-            'file' => ['nullable', 'required_without:url', 'file', 'max:51200', $this->mimeRule($request)],
+            'file' => ['nullable', 'required_without:url', 'file', $this->sizeRule($tipo), $this->mimeRule($request)],
             'url' => ['nullable', 'required_without:file', 'url', 'max:2048'],
+        ], [
+            'file.max' => $this->mensajeDeTamano($tipo),
         ]);
 
         $payload = [
@@ -77,6 +82,29 @@ class ServiceMediaController extends Controller
         return $request->input('type') === 'video'
             ? 'mimes:mp4,webm,mov,ogg'
             : 'mimes:jpg,jpeg,png,webp,gif';
+    }
+
+    /**
+     * Tope de peso según el tipo, en kilobytes.
+     *
+     * Hasta el 31-ago-2026 esto era un `max:51200` (50 MB) para todo, muy por
+     * encima de lo que acepta WhatsApp. Un video de 35 MB entró al panel el
+     * 20-ago y el bot lo intentó enviar durante once días, fallando siempre con
+     * el acuse `131053` mientras en la bandeja figuraba como enviado. Aceptar
+     * aquí lo que allá se rechaza es prometer algo que no se puede cumplir.
+     */
+    private function sizeRule(string $tipo): string
+    {
+        return 'max:'.intdiv(WhatsAppService::limiteBytes($tipo), 1024);
+    }
+
+    private function mensajeDeTamano(string $tipo): string
+    {
+        return sprintf(
+            'WhatsApp no acepta %s de más de %d MB, así que este archivo nunca le llegaría a la paciente. Súbelo comprimido.',
+            $tipo === 'video' ? 'videos' : 'imágenes',
+            WhatsAppService::limiteMb($tipo),
+        );
     }
 
     private function authorizeService(Request $request, Service $service): void

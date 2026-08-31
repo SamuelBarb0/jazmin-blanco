@@ -281,12 +281,23 @@ class InboxController extends Controller
     {
         $this->authorizeConversation($request, $conversation);
 
+        // El tope depende del tipo: WhatsApp admite 16 MB en video pero solo 5
+        // en imagen. El `max:15360` que había aquí para todo dejaba pasar fotos
+        // de 8 MB que Meta rechaza después con `131053`, cuando la doctora ya
+        // las ve enviadas en la bandeja.
+        $subido = $request->file('archivo');
+        $tipo = $subido && Str::startsWith((string) $subido->getMimeType(), 'video/') ? 'video' : 'image';
+
         $data = $request->validate([
             'content' => ['nullable', 'string', 'max:4000'],
-            // WhatsApp acepta hasta 5 MB en imagen y 16 MB en video; nos
-            // quedamos en 15 MB y dejamos que Meta rechace el borde.
-            'archivo' => ['nullable', 'file', 'max:15360',
+            'archivo' => ['nullable', 'file', 'max:'.intdiv(WhatsAppService::limiteBytes($tipo), 1024),
                 'mimetypes:image/jpeg,image/png,image/webp,video/mp4,video/3gpp'],
+        ], [
+            'archivo.max' => sprintf(
+                'WhatsApp no acepta %s de más de %d MB. Comprime el archivo antes de enviarlo.',
+                $tipo === 'video' ? 'videos' : 'imágenes',
+                WhatsAppService::limiteMb($tipo),
+            ),
         ]);
 
         $texto = trim((string) ($data['content'] ?? ''));

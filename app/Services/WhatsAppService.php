@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\DeliveryFailure;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 /**
@@ -15,12 +17,24 @@ use Illuminate\Support\Str;
  */
 class WhatsAppService
 {
+    /**
+     * Topes de peso que acepta la Cloud API, por tipo de archivo.
+     *
+     * Importan más de lo que parece porque el rechazo es ASÍNCRONO: Meta
+     * descarga el archivo desde la URL que le pasamos y, si no le sirve, ya nos
+     * respondió 200. El fallo llega después como acuse `131053` y mientras
+     * tanto el mensaje figura como enviado en la bandeja. Por eso se mide
+     * antes de llamar a la API en vez de esperar el acuse.
+     */
+    public const LIMITE_IMAGEN = 5 * 1024 * 1024;
+
+    public const LIMITE_VIDEO = 16 * 1024 * 1024;
+
     public function __construct(
         private readonly ?string $token,
         private readonly ?string $phoneId,
         private readonly string $apiVersion = 'v21.0',
-    ) {
-    }
+    ) {}
 
     public static function fromConfig(): self
     {
@@ -96,6 +110,10 @@ class WhatsAppService
     {
         $type = $type === 'video' ? 'video' : 'image';
 
+        if (! $this->cabeEnWhatsApp($to, $type, $url)) {
+            return false;
+        }
+
         $media = ['link' => $url];
         if (trim($caption) !== '') {
             $media['caption'] = Str::limit(trim($caption), 1020, '…');
@@ -108,6 +126,83 @@ class WhatsAppService
             'type' => $type,
             $type => $media,
         ]);
+    }
+
+    /** Bytes que admite WhatsApp para un 'image' o un 'video'. */
+    public static function limiteBytes(string $type): int
+    {
+        return $type === 'video' ? self::LIMITE_VIDEO : self::LIMITE_IMAGEN;
+    }
+
+    /** El mismo tope en MB, para los mensajes que lee la doctora. */
+    public static function limiteMb(string $type): int
+    {
+        return intdiv(self::limiteBytes($type), 1024 * 1024);
+    }
+
+    /**
+     * ¿El archivo cabe en el tope de WhatsApp?
+     *
+     * Solo se puede medir lo que vive en nuestro disco público, que es de donde
+     * salen las fotos y videos de servicios y campañas. Una URL externa se deja
+     * pasar: medirla costaría una petición de red dentro del job que le está
+     * respondiendo a la paciente, y ese job ya se quedó sin respuesta una vez
+     * por esperar a Meta.
+     *
+     * Si no cabe, se anota en `delivery_failures` —el mismo sitio donde caería
+     * el acuse de Meta— y NO se llama a la API. Así el fallo sale en el resumen
+     * diario en vez de aparecer como enviado en la bandeja.
+     */
+    private function cabeEnWhatsApp(string $to, string $type, string $url): bool
+    {
+        $bytes = $this->pesoEnDisco($url);
+        $limite = self::limiteBytes($type);
+
+        if ($bytes === null || $bytes <= $limite) {
+            return true;
+        }
+
+        Log::warning('Archivo demasiado grande para WhatsApp; no se envía.', [
+            'para' => $to,
+            'tipo' => $type,
+            'url' => $url,
+            'bytes' => $bytes,
+            'limite' => $limite,
+        ]);
+
+        DeliveryFailure::create([
+            'phone' => $to,
+            'code' => 131053,
+            'title' => 'Media upload error',
+            'details' => sprintf(
+                'Comprobado antes de enviar: el %s pesa %d bytes y el tope de WhatsApp es %d. Archivo: %s',
+                $type === 'video' ? 'video' : 'la imagen',
+                $bytes,
+                $limite,
+                $url,
+            ),
+            'created_at' => now(),
+        ]);
+
+        return false;
+    }
+
+    /**
+     * Peso en disco del archivo al que apunta la URL, si es una de las nuestras
+     * (`APP_URL/storage/…`). Para cualquier otra cosa, null.
+     */
+    private function pesoEnDisco(string $url): ?int
+    {
+        $disco = Storage::disk('public');
+        $base = rtrim($disco->url('/'), '/');
+
+        if ($base === '' || ! Str::startsWith($url, $base.'/')) {
+            return null;
+        }
+
+        $relativa = ltrim(rawurldecode(Str::after($url, $base)), '/');
+
+        return $disco->exists($relativa) ? $disco->size($relativa) : null;
     }
 
     /**

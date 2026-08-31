@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Campaign;
 use App\Models\CampaignMedia;
+use App\Services\WhatsAppService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -18,11 +19,15 @@ class CampaignMediaController extends Controller
     {
         $this->authorizeCampaign($request, $campaign);
 
+        $tipo = $request->input('type') === 'video' ? 'video' : 'image';
+
         $data = $request->validate([
             'type' => ['required', Rule::in(['image', 'video'])],
             'caption' => ['nullable', 'string', 'max:500'],
-            'file' => ['nullable', 'required_without:url', 'file', 'max:51200', $this->mimeRule($request)],
+            'file' => ['nullable', 'required_without:url', 'file', $this->sizeRule($tipo), $this->mimeRule($request)],
             'url' => ['nullable', 'required_without:file', 'url', 'max:2048'],
+        ], [
+            'file.max' => $this->mensajeDeTamano($tipo),
         ]);
 
         $payload = [
@@ -77,6 +82,27 @@ class CampaignMediaController extends Controller
         return $request->input('type') === 'video'
             ? 'mimes:mp4,webm,mov,ogg'
             : 'mimes:jpg,jpeg,png,webp,gif';
+    }
+
+    /**
+     * Tope de peso según el tipo, en kilobytes.
+     *
+     * Ver la nota de `ServiceMediaController::sizeRule()`: el `max:51200` (50
+     * MB) que había aquí acepta archivos que WhatsApp rechaza después, cuando
+     * ya es tarde para avisar a quien los subió.
+     */
+    private function sizeRule(string $tipo): string
+    {
+        return 'max:'.intdiv(WhatsAppService::limiteBytes($tipo), 1024);
+    }
+
+    private function mensajeDeTamano(string $tipo): string
+    {
+        return sprintf(
+            'WhatsApp no acepta %s de más de %d MB, así que este archivo nunca le llegaría a la paciente. Súbelo comprimido.',
+            $tipo === 'video' ? 'videos' : 'imágenes',
+            WhatsAppService::limiteMb($tipo),
+        );
     }
 
     private function authorizeCampaign(Request $request, Campaign $campaign): void
