@@ -128,7 +128,11 @@ const SidebarProvider = React.forwardRef<
                             ...style,
                         } as React.CSSProperties
                     }
-                    className={cn('group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar', className)}
+                    // `h-svh` y no `min-h-svh`: con min-height la cadena nunca llega a ser
+                    // una altura DEFINIDA, y sin eso los `flex-1 min-h-0` de dentro no
+                    // tienen contra que resolver. La bandeja se quedaba con un piso de
+                    // 724px y el compositor caia por debajo del borde de la pantalla.
+                    className={cn('group/sidebar-wrapper flex h-svh w-full has-data-[variant=inset]:bg-sidebar', className)}
                     ref={ref}
                     {...props}
                 >
@@ -286,8 +290,11 @@ const SidebarInset = React.forwardRef<HTMLDivElement, React.ComponentProps<'main
                 // min-w-0 es obligatorio: como flex item, `min-width: auto` hace que
                 // el contenido ancho (kanban, tablas) ESTIRE el main en vez de
                 // desplazarse dentro, y la página entera se va en horizontal en móvil.
-                'relative flex min-h-svh w-full min-w-0 flex-1 flex-col bg-background',
-                'peer-data-[variant=inset]:min-h-[calc(100svh-(--spacing(4)))] md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm',
+                // `h-full min-h-0` para heredar la altura definida del envoltorio, y
+                // `overflow-y-auto` para que las pantallas largas (dashboard) sigan
+                // desplazandose aqui dentro en vez de estirar la pagina entera.
+                'relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-y-auto bg-background',
+                'peer-data-[variant=inset]:h-[calc(100svh-(--spacing(4)))] md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm',
                 className,
             )}
             {...props}
