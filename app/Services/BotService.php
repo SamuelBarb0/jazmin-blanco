@@ -8,6 +8,7 @@ use App\Models\Conversation;
 use App\Models\PaymentLink;
 use App\Models\ReminderOptOut;
 use App\Models\Service;
+use App\Models\TransferRequest;
 use App\Models\User;
 use App\Support\PatientLeads;
 use App\Support\Settings;
@@ -545,7 +546,7 @@ class BotService
                         'notas' => ['type' => 'string', 'description' => 'Notas u observaciones.'],
                         'pago_por_transferencia' => [
                             'type' => 'boolean',
-                            'description' => 'true SOLO si la paciente eligió pagar por transferencia o Nequi en vez del link. La cita se aparta igual, pero queda marcada para que la doctora confirme en el banco que el dinero llegó. NO lo pongas en true por insistencia, prisa ni promesas de pagar después: solo cuando de verdad escogió ese medio.',
+                            'description' => 'true SOLO si la paciente eligió pagar por transferencia o Nequi en vez del link. Con este medio la cita SOLO se crea si ya envió el comprobante por el chat; si no lo ha enviado, la herramienta no agenda y te dice qué escribirle. NO lo pongas en true por insistencia, prisa ni promesas de pagar después: solo cuando de verdad escogió ese medio.',
                         ],
                     ],
                     'required' => ['nombre_paciente', 'fecha_hora'],
@@ -1160,38 +1161,61 @@ class BotService
         $link = null;
         $porTransferencia = (bool) ($input['pago_por_transferencia'] ?? false);
 
-        // Transferencia: no hay nada que consultar, porque el abono aparece en
-        // el banco de la doctora y no en un API. Se aparta el cupo igual —si no,
-        // lo pierde mientras alguien verifica a mano— pero la cita queda MARCADA
-        // y sale con el aviso en el calendario de la doctora.
+        // Transferencia: aquí no hay pasarela que confirme nada, así que el
+        // ÚNICO indicio que tenemos de que pagó es que mande el comprobante.
         //
-        // Es una concesión deliberada: aquí se agenda SIN comprobar el pago, que
-        // es justo lo que la pasarela existe para evitar. Lo que la hace
-        // aceptable es que el descubierto sea VISIBLE (marca en el evento y en
-        // el resumen diario), no que sea improbable.
+        // Antes se agendaba en cuanto la paciente decía «por Nequi» y la cita
+        // quedaba con una marca roja. La apuesta era que la marca bastara. No
+        // bastó: la doctora se encontraba citas sin pagar, las borraba a mano
+        // y el espacio se perdía igual. Ahora sin comprobante NO hay cita —y
+        // tampoco se aparta el hueco, que le sigue saliendo libre a las demás.
         if ($porTransferencia) {
+            $datos = trim((string) (Settings::botConfig()['clinic_payment'] ?? ''));
+
+            if (! $this->comprobanteReciente()) {
+                // Se guarda lo acordado para poder recordárselo con su día y
+                // su hora, y para que el seguimiento sepa a quién insistirle.
+                $this->registrarSolicitudTransferencia($input);
+
+                // Red de seguridad: si el modelo no escribe los datos, los
+                // anexa el código. Sin ellos la paciente no tiene a dónde
+                // transferir y la conversación se muere ahí.
+                $this->datosPagoPorAnexar = $datos ?: null;
+
+                return 'ERROR: NO agendes todavía. Esta paciente eligió transferencia o Nequi y aún no ha enviado el comprobante, '
+                    .'y sin comprobante no se aparta el cupo.'
+                    .(filled($datos)
+                        ? "
+
+COPIA ESTOS DATOS DE PAGO EN TU RESPUESTA, TAL CUAL, SIN RESUMIRLOS NI CAMBIAR UN SOLO NÚMERO. Es lo más importante del mensaje:
+
+{$datos}"
+                        : '
+
+NO hay datos de transferencia configurados: dile que el consultorio se los envía enseguida y escala con escalar_a_humano.')
+                    .'
+
+Después de los datos, con calidez y sin sonar a desconfianza: pídele que te ENVÍE POR AQUÍ el comprobante o captura de la transferencia, '
+                    .'y dile claramente que el horario queda disponible para otras pacientes hasta que llegue, así que mejor mandarlo pronto. '
+                    .'NO le digas que su cita quedó apartada ni confirmada, porque no lo está.';
+            }
+
+            // Llegó el comprobante: se agenda. Sigue marcada, porque una
+            // captura no es la plata en la cuenta: la doctora confirma en el
+            // banco y le da a «Ya la verifiqué».
             $resultado = $this->createBooking($input + ['transferencia_por_verificar' => true]);
 
             if (! $resultado['appointment']) {
                 return $resultado['message'];
             }
 
-            // Los datos de pago viajan AQUÍ, en el resultado de la herramienta,
-            // y no solo como regla del system prompt: ahí competían con otras
-            // instrucciones obligatorias del mismo mensaje (recordatorios,
-            // política de cancelación) y el modelo los omitía una y otra vez,
-            // dejando a la paciente con la cita apartada y sin saber a dónde
-            // transferir. En el tool result los tiene delante al escribir.
-            $datos = trim((string) (Settings::botConfig()['clinic_payment'] ?? ''));
+            $this->cerrarSolicitudTransferencia($resultado['appointment']);
 
-            // Red de seguridad: si el modelo no los escribe, los anexa el código.
-            $this->datosPagoPorAnexar = $datos ?: null;
+            return $resultado['message']
+                .'
 
-            return $resultado['message']."\n\nLa cita quedó apartada pero el pago NO está verificado."
-                .(filled($datos)
-                    ? "\n\nCOPIA ESTOS DATOS DE PAGO EN TU RESPUESTA, TAL CUAL, SIN RESUMIRLOS NI CAMBIAR UN SOLO NÚMERO. Es lo más importante del mensaje: sin ellos no tiene a dónde transferir.\n\n{$datos}"
-                    : "\n\nNO hay datos de transferencia configurados: dile que el consultorio se los envía enseguida y escala con escalar_a_humano.")
-                ."\n\nDespués de los datos, confírmale la cita con calidez y dile que el consultorio verifica el pago antes de la cita.";
+La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el comprobante y confírmasela con calidez. '
+                .'Dile que el consultorio termina de verificar el pago antes de la cita. NO le vuelvas a pedir el comprobante ni le pidas que pague otra vez.';
         }
 
         // Con la pasarela conectada, el pago deja de depender de la palabra de
@@ -1227,6 +1251,99 @@ class BotService
         }
 
         return $resultado['message'];
+    }
+
+    /**
+     * ¿Mandó la paciente algo que parezca el comprobante hace poco?
+     *
+     * No miramos la imagen —el bot no la ve—, solo que HAYA llegado: la nota
+     * que deja el webhook para imágenes y archivos. Que el dinero esté de
+     * verdad en la cuenta lo confirma la doctora después, por eso la cita
+     * igual nace marcada.
+     *
+     * La ventana de 6 horas es a propósito generosa hacia atrás: muchas pagan
+     * primero, mandan la captura y solo entonces escriben «listo, por Nequi».
+     * Exigir que el comprobante llegara DESPUÉS de pedirlo dejaría fuera ese
+     * caso, que es el más común entre las que sí pagan.
+     */
+    private function comprobanteReciente(): bool
+    {
+        if (! $this->conversation) {
+            return false;
+        }
+
+        return $this->conversation->messages()
+            ->where('role', 'user')
+            ->where('created_at', '>=', now()->subHours(6))
+            ->where('content', 'like', '%posible comprobante de pago%')
+            ->exists();
+    }
+
+    /**
+     * Deja constancia de que se le pidió el anticipo y de para cuándo era el
+     * horario, que es lo que el seguimiento necesita para insistirle una vez
+     * y para avisarle después de que el cupo ya no está reservado.
+     *
+     * @param  array<string,mixed>  $input
+     */
+    private function registrarSolicitudTransferencia(array $input): void
+    {
+        if (! $this->conversation) {
+            return;
+        }
+
+        $servicioPedido = trim((string) ($input['servicio'] ?? ''));
+        $duracion = max(15, (int) ($input['duracion_minutos'] ?? 0)
+            ?: ($this->resolveService($servicioPedido)?->duration_minutes ?? 0)
+            ?: $this->duracionPorDefecto());
+
+        $reserva = array_filter([
+            'fecha_hora' => trim((string) ($input['fecha_hora'] ?? '')) ?: null,
+            'nombre_paciente' => trim((string) ($input['nombre_paciente'] ?? '')) ?: $this->conversation->lead?->name,
+            'servicio' => $servicioPedido ?: null,
+            'telefono' => trim((string) ($input['telefono'] ?? '')) ?: $this->conversation->lead?->phone,
+            'correo' => trim((string) ($input['correo'] ?? '')) ?: null,
+            'duracion_minutos' => $duracion,
+        ]);
+
+        $pendiente = TransferRequest::where('conversation_id', $this->conversation->id)
+            ->pendientes()
+            ->first();
+
+        // Si ya había una, solo se le actualiza el horario acordado. El plazo
+        // NO se reinicia: si no, cada vez que la paciente vuelve a preguntar
+        // se aplaza el vencimiento y la solicitud no caduca nunca.
+        if ($pendiente) {
+            $pendiente->forceFill(['booking' => $reserva])->save();
+
+            return;
+        }
+
+        TransferRequest::create([
+            'user_id' => $this->user->id,
+            'conversation_id' => $this->conversation->id,
+            'lead_id' => $this->conversation->lead_id,
+            'booking' => $reserva,
+            'amount' => Settings::valoracionAmount(),
+            'status' => TransferRequest::PENDIENTE,
+            'expires_at' => now()->addHours(Settings::transferProofConfig()['expire_hours']),
+        ]);
+    }
+
+    /** Llegó el comprobante y la cita existe: la solicitud deja de estar viva. */
+    private function cerrarSolicitudTransferencia(Appointment $cita): void
+    {
+        if (! $this->conversation) {
+            return;
+        }
+
+        TransferRequest::where('conversation_id', $this->conversation->id)
+            ->pendientes()
+            ->update([
+                'status' => TransferRequest::CUMPLIDA,
+                'fulfilled_at' => now(),
+                'appointment_id' => $cita->id,
+            ]);
     }
 
     /**
@@ -2102,7 +2219,8 @@ class BotService
         # Pago de la valoración OBLIGATORIO antes de agendar (regla estricta)
         - NUNCA uses agendar_cita si el paciente todavía no ha pagado la valoración. El pago es el requisito para apartar el cupo; sin pago no hay cita.
         - Flujo: ayúdale a elegir un día y una hora disponibles, pero antes de agendar dile con calidez que para apartar ese cupo necesita pagar la valoración.{$pagoBlock}
-        - NUNCA le pidas la captura del comprobante, ni los datos de su tarjeta o cuenta.
+        - Con el LINK de pago nunca le pidas captura ni comprobante: la pasarela confirma sola. Con TRANSFERENCIA o Nequi sí se lo pides, porque no hay nada más que confirme que pagó.
+        - Nunca le pidas los datos de su tarjeta ni de su cuenta bancaria.
         - Si solo dice "ahorita pago" o "ya voy a pagar", NO agendes: espera con amabilidad a que el pago se concrete.
         - Si el paciente envía una imagen por su cuenta mientras coordinan la cita, agradécele pero NO transcribas ni comentes los datos que aparezcan en ella.
         - Apenas el pago esté confirmado, usa agendar_cita de INMEDIATO con el día y la hora que el paciente había elegido, agradécele el pago y confírmale la cita con calidez.
@@ -2110,8 +2228,11 @@ class BotService
         # Las dos formas de pagar la valoración
         - Cuando le pidas el pago, ofrécele SIEMPRE las dos opciones en el mismo mensaje, en este orden: (1) el link de pago, y (2) transferencia o Nequi. Que elija ella.
         - Del link: aclárale que NO necesita tener cuenta de Mercado Pago. Desde ahí puede pagar con tarjeta débito o crédito, con PSE entrando a su propio banco, o en efectivo en Efecty. Es la opción que confirma sola y le aparta el cupo al instante.
-        - Si elige transferencia o Nequi: agenda con agendar_cita poniendo "pago_por_transferencia" en true, y en el MISMO mensaje ESCRIBE LOS DATOS DE PAGO COMPLETOS (banco, número de cuenta, titular, NIT y Nequi), copiados exactamente como aparecen arriba. Es obligatorio y es lo PRIMERO que va en el mensaje, antes de confirmarle la cita: sin esos datos no tiene a dónde transferir, y decirle "recuerda hacer la transferencia" sin ellos no le sirve de nada.
-        - Con transferencia, confírmale la cita con normalidad y sin sembrarle desconfianza. Basta con que le digas que el consultorio verifica el pago antes de la cita y que le avise por aquí cuando la haya hecho. NO le pidas comprobante ni captura.
+        - Si elige transferencia o Nequi: usa agendar_cita con "pago_por_transferencia" en true. Si todavía no ha enviado el comprobante, la herramienta NO va a agendar y te lo dirá; eso es lo correcto, no lo intentes otra vez.
+        - En ese mensaje ESCRIBE LOS DATOS DE PAGO COMPLETOS (banco, número de cuenta, titular, NIT y Nequi), copiados exactamente como aparecen arriba. Es lo PRIMERO que va en el mensaje: sin esos datos no tiene a dónde transferir, y decirle "recuerda hacer la transferencia" sin ellos no le sirve de nada.
+        - Después de los datos, pídele que te ENVÍE POR AQUÍ el comprobante o la captura de la transferencia. Con calidez y sin sonar a desconfianza: es sencillamente lo que hace falta para apartarle el cupo.
+        - Mientras no llegue el comprobante, NO le digas que su cita quedó apartada, agendada ni confirmada, porque no lo está. Dile que ese horario sigue disponible para otras pacientes hasta que lo mande, así que mejor pronto.
+        - Cuando el comprobante llegue, agendas y le confirmas con calidez, diciéndole que el consultorio termina de verificar el pago antes de la cita. Ahí ya NO le vuelvas a pedir comprobante ni que pague otra vez.
         - "pago_por_transferencia" en true SOLO si de verdad eligió ese medio. Nunca por insistencia, prisa, ni porque prometa pagar después: para todo lo demás sigue valiendo que sin pago confirmado no hay cita.
 
         # Política de cancelación

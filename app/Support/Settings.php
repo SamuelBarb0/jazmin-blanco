@@ -624,6 +624,33 @@ class Settings
         return $raw === null || $raw === '' ? 12 : max(0, (int) $raw);
     }
 
+    /**
+     * Seguimiento de las transferencias sin comprobante.
+     *
+     * `reminder_hours`: a las cuántas horas se le recuerda una vez.
+     * `expire_hours`: cuándo se da por perdida y se le avisa que el horario
+     * ya no está reservado.
+     *
+     * Los dos por debajo de 24 h a propósito: pasadas 24 horas del último
+     * mensaje de la paciente, WhatsApp ya no deja escribirle texto libre y el
+     * recordatorio no saldría. Ver la ventana de 24 h.
+     *
+     * @return array{reminder_hours:int, expire_hours:int}
+     */
+    public static function transferProofConfig(): array
+    {
+        $recordar = (int) (self::get('transfer_proof_reminder_hours') ?: 3);
+        $vencer = (int) (self::get('transfer_proof_expire_hours') ?: 12);
+
+        // El vencimiento nunca puede ir antes del recordatorio: si alguien los
+        // deja cruzados, la paciente recibiría «se liberó tu cupo» sin que se
+        // le hubiera recordado nada.
+        $recordar = max(1, min(23, $recordar));
+        $vencer = max($recordar + 1, min(23, $vencer));
+
+        return ['reminder_hours' => $recordar, 'expire_hours' => $vencer];
+    }
+
     public static function reactivationExcludedStages(): array
     {
         $raw = (string) (self::get('reactivation_excluded_stages') ?: 'agendado,en valoracion,cerrado,perdido');

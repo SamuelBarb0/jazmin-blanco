@@ -89,3 +89,18 @@ Schedule::command('resumen:diario')
     ->dailyAt('07:00')
     ->timezone('America/Bogota')
     ->withoutOverlapping();
+
+/*
+ * Comprobantes de transferencia que no llegaron.
+ *
+ * Desde que la cita no se crea sin comprobante, callarse dejaría a la paciente
+ * creyendo que tiene cupo. Este barrido le insiste UNA vez y, si vence el
+ * plazo, le avisa que el horario se liberó.
+ *
+ * Cada hora y no cada minuto: los umbrales son de horas, y cada mensaje que
+ * sale cuesta una conversación con Meta. Los dos plazos viven por debajo de
+ * las 24 h porque pasado ese punto WhatsApp ya no deja escribir texto libre.
+ */
+Schedule::command('transfers:follow-up')
+    ->hourly()
+    ->withoutOverlapping();
