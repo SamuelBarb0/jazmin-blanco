@@ -9,6 +9,7 @@ use App\Services\GoogleCalendarService;
 use App\Services\WhatsAppService;
 use App\Support\PatientLeads;
 use App\Support\Settings;
+use Closure;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -133,6 +134,7 @@ class AppointmentController extends Controller
 
         $data = $this->validateData($request);
         $antes = $appointment->starts_at?->copy();
+        $telefonoAntes = $appointment->telefonoWhatsapp();
 
         $appointment->update($this->toAttributes($request, $data));
 
@@ -154,6 +156,28 @@ class AppointmentController extends Controller
 
             $aviso = $this->avisarPaciente($appointment, 'reprogramada')
                 .$this->avisarPacientePorCorreo($appointment, 'reprogramada');
+        } elseif ($appointment->telefonoWhatsapp() !== $telefonoAntes && filled($appointment->telefonoWhatsapp())) {
+            // Cambió el número: hasta ahora esto no reenviaba NADA, y corregir
+            // un teléfono equivocado es justo lo que se hace después de que un
+            // aviso rebote. La cita del 9-sep-2026 se creó con el prefijo
+            // tecleado dos veces, el aviso salió a un número inexistente, la
+            // doctora arregló el teléfono una hora después… y la paciente
+            // siguió sin enterarse, porque solo se reenviaba al cambiar la
+            // fecha.
+            //
+            // Se compara el número YA NORMALIZADO: así un retoque de forma
+            // (un espacio, un guion) no le vuelve a escribir a nadie.
+            //
+            // Las marcas de recordatorio se limpian por lo mismo: si alguna se
+            // dio por enviada, fue al número viejo, y la paciente de este
+            // número nunca ha recibido nada.
+            $appointment->forceFill([
+                'reminder_24h_sent_at' => null,
+                'reminder_2h_sent_at' => null,
+            ])->save();
+
+            $aviso = $this->avisarPaciente($appointment)
+                .$this->avisarPacientePorCorreo($appointment);
         }
 
         return redirect()->route('appointments.index')
@@ -362,6 +386,11 @@ class AppointmentController extends Controller
             return ' ⚠️ No se le pudo avisar por WhatsApp.';
         }
 
+        // Meta ACEPTÓ el mensaje; que llegue es otra cosa, y la sabremos unos
+        // segundos después por el webhook de acuses. Se guarda el código del
+        // mensaje para poder reconocer ese acuse y, si rebota, marcar la cita.
+        $appointment->avisoEnviado($whatsapp->lastMessageId());
+
         // Queda en el historial del chat, para que la doctora vea lo que le llegó.
         $conversacion?->messages()->create([
             'role' => 'assistant',
@@ -468,13 +497,17 @@ class AppointmentController extends Controller
             ])?->id;
         }
 
-        // Si no se escribió teléfono pero el paciente del CRM tiene uno, se
-        // hereda. Sin esto la cita nace muda: los recordatorios resuelven el
-        // número por `patient_phone` o por el del lead, y al elegir a una
-        // paciente del desplegable la doctora da por hecho que ya se sabe su
-        // número. De 103 citas solo 22 tenían teléfono propio.
+        // Si la cita no trae un teléfono utilizable pero el paciente del CRM
+        // tiene uno, se hereda. Sin esto la cita nace muda: los recordatorios
+        // resuelven el número por `patient_phone` o por el del lead, y al
+        // elegir a una paciente del desplegable la doctora da por hecho que ya
+        // se sabe su número. De 103 citas solo 22 tenían teléfono propio.
+        //
+        // La condición es "no utilizable" y no `blank()`: un valor a medias
+        // (nueve dígitos) tampoco sirve para escribirle, pero al no estar vacío
+        // impedía heredar el bueno del lead. Con `MILTON SERNA` pasó justo eso.
         $telefono = $data['patient_phone'] ?? null;
-        if (blank($telefono) && $leadId) {
+        if ($leadId && ! Settings::phoneWithCountryCode($telefono)) {
             $telefono = $request->user()->leads()->whereKey($leadId)->value('phone');
         }
 
@@ -500,7 +533,35 @@ class AppointmentController extends Controller
             'lead_id' => ['nullable', 'integer'],
             'service_id' => ['nullable', 'integer'],
             'patient_name' => ['required', 'string', 'max:255'],
-            'patient_phone' => ['nullable', 'string', 'max:50'],
+            // Un teléfono con CERO dígitos no es un teléfono a medias, es otra
+            // cosa escrita en la casilla equivocada: así se guardó el NOMBRE de
+            // una paciente ("MARYORY FONSECA") y su cita se quedó sin
+            // recordatorio hasta que la doctora lo notó a un día vista.
+            //
+            // El corte está en "ningún dígito" y NO en "menos de 10" a
+            // propósito: un número corto sí se acepta —puede ser un fijo o un
+            // dedazo recuperable—, se guarda y la doctora ve el aviso de «Sin
+            // teléfono» al crear la cita. Eso ya estaba decidido y probado.
+            //
+            // Lo LARGO sí se rechaza, y aquí no hay medias tintas: un número de
+            // más de diez dígitos que no se puede interpretar es el que se cuela
+            // hasta Meta, se acepta con un 200 y rebota después contra un
+            // destinatario que no existe. Así se perdió el aviso de la cita del
+            // 9-sep-2026, escrita como «312 3124592028». Un número corto se ve
+            // en pantalla («Sin teléfono»); este no se veía en ninguna parte.
+            'patient_phone' => ['nullable', 'string', 'max:50', function (string $attribute, mixed $value, Closure $fail) {
+                $digitos = preg_replace('/\D/', '', (string) $value);
+
+                if (filled($value) && $digitos === '') {
+                    $fail('El teléfono no tiene ningún número. Si no lo tienes a mano, déjalo vacío y se usará el del paciente en el CRM.');
+
+                    return;
+                }
+
+                if (strlen($digitos) > 10 && ! Settings::phoneWithCountryCode((string) $value)) {
+                    $fail('Ese teléfono tiene '.strlen($digitos).' dígitos y no parece un número válido. Un celular colombiano son 10 dígitos (3XX XXX XXXX), o 12 con el 57 delante. Si es de otro país, escríbelo con «+» y el indicativo.');
+                }
+            }],
             'patient_email' => ['nullable', 'email', 'max:255'],
             'starts_at' => ['required', 'date'],
             'duration_minutes' => ['nullable', 'integer', 'min:5', 'max:600'],

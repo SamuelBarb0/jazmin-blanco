@@ -29,6 +29,9 @@ class Appointment extends Model
         'reminder_2h_sent_at',
         'reminder_24h_sent_at',
         'transfer_pending_at',
+        'notice_wamid',
+        'notice_failed_at',
+        'notice_failure',
     ];
 
     protected function casts(): array
@@ -40,7 +43,26 @@ class Appointment extends Model
             'reminder_2h_sent_at' => 'datetime',
             'reminder_24h_sent_at' => 'datetime',
             'transfer_pending_at' => 'datetime',
+            'notice_failed_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Deja constancia de que Meta ACEPTÓ el aviso, y de nada más.
+     *
+     * El `wamid` es lo que permitirá reconocer el acuse de entrega cuando
+     * llegue por el webhook, segundos después. Se borra a la vez cualquier
+     * rebote anterior: si estamos enviando otra vez es porque se corrigió lo
+     * que fallaba, y dejar la marca roja puesta convertiría el aviso en ruido
+     * permanente.
+     */
+    public function avisoEnviado(?string $wamid): void
+    {
+        $this->forceFill([
+            'notice_wamid' => $wamid,
+            'notice_failed_at' => null,
+            'notice_failure' => null,
+        ])->save();
     }
 
     /**
@@ -72,7 +94,15 @@ class Appointment extends Model
         // La regla en sí vive en Settings desde que el mensaje de reactivación
         // necesitó exactamente la misma sobre el teléfono del LEAD: tenerla dos
         // veces es la forma conocida de que una de las dos se quede sin arreglar.
-        return Settings::phoneWithCountryCode($this->patient_phone ?: $this->lead?->phone, $codigoPais);
+        //
+        // Se PRUEBAN los dos por separado en vez de `patient_phone ?: lead`.
+        // Con `?:` el respaldo solo entraba si el campo estaba VACÍO, y un
+        // valor inservible no está vacío: una cita con el nombre escrito en la
+        // casilla del teléfono ("MARYORY FONSECA") tapaba el número bueno del
+        // lead y se quedaba sin recordatorio, en silencio. Pasó con la cita del
+        // 9-sep-2026, y con dos números a los que les faltaba un dígito.
+        return Settings::phoneWithCountryCode($this->patient_phone, $codigoPais)
+            ?? Settings::phoneWithCountryCode($this->lead?->phone, $codigoPais);
     }
 
     public function user(): BelongsTo

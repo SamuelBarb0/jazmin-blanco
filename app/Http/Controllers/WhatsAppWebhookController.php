@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\ProcessWhatsAppMessage;
+use App\Models\Appointment;
 use App\Models\DeliveryFailure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -88,6 +89,14 @@ class WhatsAppWebhookController extends Controller
                             'wamid' => (string) data_get($status, 'id'),
                             'created_at' => now(),
                         ]);
+
+                        // Y, si el mensaje era el aviso de una cita, se marca la
+                        // cita. Guardarlo suelto en `delivery_failures` no bastó:
+                        // la doctora vio «Se le avisó por WhatsApp» en pantalla y
+                        // el rebote se quedó en una tabla que solo mira el resumen
+                        // diario. La marca es lo que hace que el fallo aparezca
+                        // donde ella sí está mirando: en la agenda.
+                        $this->marcarAvisoNoEntregado((string) data_get($status, 'id'), $error);
                     } else {
                         Log::info('Acuse de WhatsApp.', $datos);
                     }
@@ -120,6 +129,35 @@ class WhatsAppWebhookController extends Controller
         }
 
         return response('EVENT_RECEIVED', 200);
+    }
+
+    /**
+     * Ata un rebote de Meta a la cita cuyo aviso no llegó.
+     *
+     * El acuse solo trae el `wamid` y el número de destino; el número no sirve
+     * para emparejar, porque lo primero que se hace al ver un rebote es
+     * corregirlo. Por eso el enlace es el `wamid` que se guardó al enviar.
+     *
+     * Si no hay cita con ese código no pasa nada: el mensaje era otra cosa —una
+     * respuesta de Lore, un recordatorio— y `delivery_failures` ya lo registró.
+     *
+     * @param  array<string,mixed>  $error
+     */
+    private function marcarAvisoNoEntregado(string $wamid, array $error): void
+    {
+        if ($wamid === '') {
+            return;
+        }
+
+        $motivo = trim((string) (data_get($error, 'error_data.details') ?: data_get($error, 'title') ?: 'WhatsApp no pudo entregarlo'));
+        $codigo = data_get($error, 'code');
+
+        Appointment::query()
+            ->where('notice_wamid', $wamid)
+            ->update([
+                'notice_failed_at' => now(),
+                'notice_failure' => mb_substr($codigo ? "{$motivo} (código {$codigo})" : $motivo, 0, 255),
+            ]);
     }
 
     /**

@@ -442,6 +442,14 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                                             <AlertTriangle className="size-3" /> Verificar transferencia
                                                         </span>
                                                     )}
+                                                    {/* Rojo y en la lista, no escondido en el detalle: es lo
+                                                        único que distingue una paciente avisada de una que no
+                                                        sabe que tiene cita. */}
+                                                    {a.notice_failed_at && (
+                                                        <span className="mt-1 ml-1 inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-500/15 dark:text-red-300">
+                                                            <AlertTriangle className="size-3" /> No le llegó el aviso
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="flex shrink-0 flex-col gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                                                     <Button
@@ -659,6 +667,19 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                 <p className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
                                     {detail.google_sync_error}
                                 </p>
+                            )}
+
+                            {detail.notice_failed_at && (
+                                <div className="space-y-2 rounded-lg border border-red-300/60 bg-red-50 px-3 py-3 dark:border-red-500/30 dark:bg-red-500/10">
+                                    <p className="flex items-center gap-1.5 text-sm font-medium text-red-800 dark:text-red-300">
+                                        <AlertTriangle className="size-4 shrink-0" /> El aviso de WhatsApp no le llegó
+                                    </p>
+                                    <p className="text-xs text-red-800/80 dark:text-red-300/80">
+                                        WhatsApp aceptó el mensaje y después lo devolvió: <strong>{detail.notice_failure}</strong>. Casi siempre
+                                        es que el número está mal escrito. Corrígelo aquí mismo con «Editar» y el aviso se reenvía solo al
+                                        número nuevo.
+                                    </p>
+                                </div>
                             )}
 
                             {detail.transfer_pending_at && (

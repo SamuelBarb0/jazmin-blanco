@@ -292,10 +292,29 @@ class WhatsAppService
     }
 
     /**
+     * Identificador (`wamid`) del último mensaje que Meta aceptó.
+     *
+     * Es la ÚNICA forma de reconocer después el acuse de entrega: el webhook de
+     * `statuses` no trae la cita ni la conversación, solo este código y el
+     * número de destino. Sin guardarlo, un rebote como el `131026` que dejó a
+     * una paciente sin su aviso no se puede atribuir a nada y muere en el log.
+     *
+     * Vale null si el último envío no llegó a salir.
+     */
+    private ?string $lastMessageId = null;
+
+    public function lastMessageId(): ?string
+    {
+        return $this->lastMessageId;
+    }
+
+    /**
      * @param  array<string,mixed>  $payload
      */
     private function post(array $payload): bool
     {
+        $this->lastMessageId = null;
+
         if (! $this->isConfigured()) {
             Log::warning('WhatsApp no está configurado (faltan WHATSAPP_ACCESS_TOKEN o WHATSAPP_PHONE_ID).');
 
@@ -317,6 +336,8 @@ class WhatsAppService
 
             return false;
         }
+
+        $this->lastMessageId = $response->json('messages.0.id');
 
         return true;
     }

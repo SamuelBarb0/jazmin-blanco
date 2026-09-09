@@ -537,18 +537,54 @@ class Settings
      */
     public static function phoneWithCountryCode(?string $raw, ?string $codigoPais = null): ?string
     {
+        // Un «+» escrito a mano es la forma universal de decir «esto ya es
+        // internacional, no lo interpretes». Se mira ANTES de quitar los signos
+        // porque es la única salida para un número extranjero que, por sus
+        // dígitos, esta función descartaría (ver más abajo).
+        $internacional = str_contains((string) $raw, '+');
         $digitos = preg_replace('/\D/', '', (string) $raw);
+        $indicativo = $codigoPais ?: self::reminderConfig()['country_code'];
 
         if (strlen($digitos) < 10) {
             return null;
         }
 
-        // Más de 10 dígitos = ya trae indicativo (57…, 1…, 34…); se respeta.
-        if (strlen($digitos) > 10) {
-            return $digitos;
+        if (strlen($digitos) === 10) {
+            return $indicativo.$digitos;
         }
 
-        return ($codigoPais ?: self::reminderConfig()['country_code']).$digitos;
+        // A partir de aquí el número dice traer indicativo. Antes se devolvía
+        // TAL CUAL, y ahí se colaba cualquier dedazo largo: la cita del
+        // 9-sep-2026 se guardó con «312 3124592028» —el prefijo tecleado dos
+        // veces—, se leyó como un número internacional de 13 dígitos y el aviso
+        // salió hacia un destinatario inexistente. Meta lo aceptó con 200 y lo
+        // rebotó 19 segundos después con `131026`, así que en pantalla la
+        // doctora leyó «Se le avisó por WhatsApp» y la paciente nunca supo de
+        // su cita. Las tres comprobaciones que siguen son justo las que
+        // faltaban.
+
+        // E.164 no admite más de 15 dígitos.
+        if (strlen($digitos) > 15) {
+            return null;
+        }
+
+        // Con NUESTRO indicativo delante solo cabe una longitud: 57 + 10. Esto
+        // caza además los números a los que les falta un dígito, que se
+        // guardaron como «5731245920» y rebotaban igual de callados.
+        if (str_starts_with($digitos, $indicativo) && strlen($digitos) !== strlen($indicativo) + 10) {
+            return null;
+        }
+
+        // Empieza por 3 y mide más de 10: es un móvil colombiano con algo
+        // pegado, no un número de otro país. Ningún indicativo de los que
+        // atiende el consultorio empieza por 3 (EE. UU. 1, Panamá 507, Costa
+        // Rica 506, México 52). Si algún día hace falta uno que sí —Francia 33,
+        // Países Bajos 31—, se escribe con «+» y esta rama no lo toca.
+        if (! $internacional && str_starts_with($digitos, '3')) {
+            return null;
+        }
+
+        return $digitos;
     }
 
     /**

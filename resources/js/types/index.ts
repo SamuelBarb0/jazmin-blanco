@@ -145,6 +145,12 @@ export interface Appointment {
     google_sync_error: string | null;
     /** Se apartó pagando por transferencia y nadie ha confirmado aún que el dinero llegó. */
     transfer_pending_at: string | null;
+    /** Código del último aviso de WhatsApp que Meta aceptó, para reconocer su acuse. */
+    notice_wamid: string | null;
+    /** Cuándo rebotó ese aviso. Con valor = la paciente NO recibió nada. */
+    notice_failed_at: string | null;
+    /** Lo que dijo Meta al rebotarlo, tal cual, para que se pueda actuar. */
+    notice_failure: string | null;
     created_at: string;
     updated_at: string;
     service?: { id: number; name: string } | null;

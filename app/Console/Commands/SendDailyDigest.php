@@ -239,6 +239,35 @@ class SendDailyDigest extends Command
                 .($porVerificar->count() > 5 ? ' …' : '');
         }
 
+        // 4c. Citas que vienen y a las que NO se les puede escribir.
+        //
+        //     El comando de recordatorios las salta con un `continue` mudo, así
+        //     que una paciente puede quedarse sin aviso sin que nadie se entere
+        //     hasta que no aparece. Justo lo que pasó el 8-sep-2026: la casilla
+        //     del teléfono tenía escrito el NOMBRE de la paciente.
+        //
+        //     La ventana es de 48 h y no de 24 como la del recordatorio: así la
+        //     alerta llega el día ANTES de que el aviso tuviera que salir, y
+        //     queda margen para buscar el número. Se excluyen los marcadores de
+        //     la agenda ("FESTIVO", "clase de inglés") con el mismo criterio que
+        //     usan los recordatorios: no son pacientes y nadie espera un aviso.
+        $mudas = Appointment::where('user_id', $user->id)
+            ->whereIn('status', ['scheduled', 'confirmed'])
+            ->whereBetween('starts_at', [now(), now()->addHours(48)])
+            ->orderBy('starts_at')
+            ->get()
+            ->reject(fn (Appointment $a) => blank($a->patient_phone) && PatientLeads::isNonPatient($a->patient_name))
+            ->filter(fn (Appointment $a) => $a->telefonoWhatsapp() === null);
+
+        if ($mudas->isNotEmpty()) {
+            $detalle = $mudas
+                ->take(5)
+                ->map(fn (Appointment $a) => $a->patient_name.' · '.$a->starts_at->format('d/m H:i'))
+                ->implode('; ');
+            $alertas[] = $mudas->count().' cita(s) próximas SIN teléfono válido (no recibirán recordatorio): '.$detalle
+                .($mudas->count() > 5 ? ' …' : '');
+        }
+
         // 5. Citas que no llegaron a Google Calendar.
         $sinSync = Appointment::where('user_id', $user->id)
             ->where('created_at', '>=', $desde)
