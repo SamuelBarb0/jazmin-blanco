@@ -240,6 +240,43 @@ class AvisoDeCitaQueRebotaTest extends TestCase
         Http::assertNothingSent();
     }
 
+    // ---------------------------------------------------------------- (y los recordatorios)
+
+    /**
+     * Los recordatorios corren por otro camino —un comando programado— y
+     * durante un tiempo fueron el hueco que quedaba: si uno rebotaba, la
+     * doctora no lo veía en la agenda, solo en el resumen diario. Y ahí hay
+     * menos margen que con el aviso al agendar: salen a 24 h y a 2 h de la
+     * cita.
+     */
+    public function test_un_recordatorio_que_rebota_tambien_marca_la_cita(): void
+    {
+        Settings::put('reminders_enabled', '1');
+
+        $this->metaAceptaTodo('wamid.RECORDATORIO');
+
+        $cita = Appointment::create([
+            'user_id' => $this->doctora->id,
+            'patient_name' => 'Viviana Gomez',
+            'patient_phone' => '3124592028',
+            // Holgado a propósito: la ventana se calcula en la zona del
+            // consultorio y la cita se guarda en la de la app.
+            'starts_at' => now()->addHours(10),
+            'ends_at' => now()->addHours(11),
+            'status' => 'scheduled',
+        ]);
+
+        $this->artisan('appointments:send-reminders --force')->assertSuccessful();
+
+        $this->assertSame('wamid.RECORDATORIO', $cita->refresh()->notice_wamid, 'El recordatorio debe dejar su código en la cita.');
+
+        $this->postJson('/api/webhooks/whatsapp', $this->acuseFallido('wamid.RECORDATORIO', '573124592028'))->assertOk();
+
+        $cita->refresh();
+        $this->assertNotNull($cita->notice_failed_at);
+        $this->assertStringContainsString('131026', (string) $cita->notice_failure);
+    }
+
     /**
      * El caso de la propia Viviana de punta a punta: el lead se creó con el
      * número malo y ahí sigue. La cita tiene el bueno, y es el que manda.

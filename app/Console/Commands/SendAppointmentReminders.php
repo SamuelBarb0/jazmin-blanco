@@ -192,6 +192,15 @@ class SendAppointmentReminders extends Command
                     // refresca el modelo en memoria para lo que venga después.
                     $cita->setAttribute($columna, now());
 
+                    // Y se guarda el código del mensaje, igual que hace el aviso
+                    // al agendar. «Enviado» aquí significa solo que Meta lo
+                    // aceptó: el rebote llega segundos después por el webhook y,
+                    // sin este código, no habría forma de saber a qué cita se
+                    // refiere. Un recordatorio que no llega es tan invisible como
+                    // lo era el aviso, y con menos margen para arreglarlo: sale a
+                    // 24 h y a 2 h de la cita.
+                    $cita->avisoEnviado($whatsapp->lastMessageId());
+
                     $this->registrarEnConversacion($cita, $texto);
 
                     $enviados++;

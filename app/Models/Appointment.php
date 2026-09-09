@@ -48,13 +48,17 @@ class Appointment extends Model
     }
 
     /**
-     * Deja constancia de que Meta ACEPTÓ el aviso, y de nada más.
+     * Deja constancia de que Meta ACEPTÓ un mensaje sobre esta cita, y de nada
+     * más. Vale para los tres que salen solos: el aviso al agendar y los
+     * recordatorios de 24 h y 2 h.
      *
      * El `wamid` es lo que permitirá reconocer el acuse de entrega cuando
-     * llegue por el webhook, segundos después. Se borra a la vez cualquier
-     * rebote anterior: si estamos enviando otra vez es porque se corrigió lo
-     * que fallaba, y dejar la marca roja puesta convertiría el aviso en ruido
-     * permanente.
+     * llegue por el webhook, segundos después. Se guarda el del ÚLTIMO, que es
+     * el único que puede rebotar todavía; los anteriores ya se resolvieron.
+     *
+     * Se borra a la vez cualquier rebote anterior: si estamos enviando otra vez
+     * es porque se corrigió lo que fallaba, y dejar la marca roja puesta
+     * convertiría la alerta en ruido permanente.
      */
     public function avisoEnviado(?string $wamid): void
     {
