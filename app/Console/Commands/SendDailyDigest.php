@@ -8,6 +8,7 @@ use App\Models\DeliveryFailure;
 use App\Models\Message;
 use App\Models\PaymentLink;
 use App\Models\User;
+use App\Models\WebhookHit;
 use App\Services\WhatsAppService;
 use App\Support\PatientLeads;
 use App\Support\Settings;
@@ -191,6 +192,23 @@ class SendDailyDigest extends Command
 
         if ($sinResponder->isNotEmpty()) {
             $alertas[] = $sinResponder->count().' chat(s) con mensajes SIN RESPONDER (¿Lore caída?)';
+        }
+
+        // 1b. Mensajes que Meta nos entregó y que NUNCA llegaron a un chat.
+        //
+        //     El rastro del webhook (`webhook_hits`) se marca en cada paso: si
+        //     una fila se quedó en «recibido» o «encolado», el mensaje entró por
+        //     la puerta y se perdió dentro de casa —cola parada, job muerto—.
+        //     Es invisible de cualquier otra forma: no hay error, no hay chat,
+        //     no hay nada que mirar. Se da margen de 15 minutos para no contar
+        //     lo que justo está procesándose.
+        $perdidos = WebhookHit::where('created_at', '>=', $desde)
+            ->where('created_at', '<=', now()->subMinutes(15))
+            ->whereIn('resultado', [WebhookHit::RESULTADO_RECIBIDO, WebhookHit::RESULTADO_ENCOLADO])
+            ->count();
+
+        if ($perdidos > 0) {
+            $alertas[] = "{$perdidos} mensaje(s) entregados por Meta que NO llegaron a ningún chat";
         }
 
         // 2. Entregas que WhatsApp rechazó, agrupadas por causa.

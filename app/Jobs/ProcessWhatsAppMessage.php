@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\Campaign;
 use App\Models\Conversation;
 use App\Models\User;
+use App\Models\WebhookHit;
 use App\Services\BotService;
 use App\Services\MetaAdsService;
 use App\Services\WhatsAppService;
@@ -51,6 +52,11 @@ class ProcessWhatsAppMessage implements ShouldQueue
     /**
      * @param  array<string,mixed>|null  $referral  Datos del anuncio Click-to-WhatsApp.
      * @param  array<string,mixed>|null  $media  Descriptor del adjunto (kind, id, mime…).
+     * @param  string|null  $wamid  Id del mensaje en Meta. Sirve para anotar en
+     *                              `webhook_hits` qué acabó pasando con él. Va
+     *                              como texto y no como modelo: el rastro es un
+     *                              apunte de diagnóstico y jamás debe impedir
+     *                              que el job arranque.
      */
     public function __construct(
         public readonly string $from,
@@ -59,10 +65,15 @@ class ProcessWhatsAppMessage implements ShouldQueue
         public readonly ?array $referral = null,
         public readonly ?array $media = null,
         public readonly ?string $phoneNumberId = null,
+        public readonly ?string $wamid = null,
     ) {}
 
     public function handle(): void
     {
+        // El rastro que dejó el webhook al recibir esto. Se marca en CADA
+        // salida del job: así «llegó y no le contestaron» siempre dice por qué.
+        $rastro = WebhookHit::porWamid($this->wamid);
+
         // Se construye desde config (token + phone_id de las variables WHATSAPP_*).
         // NO por inyección: sin un binding, el contenedor lo crearía con token/
         // phone_id en null → isConfigured()=false → nunca respondería.
@@ -82,6 +93,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
         try {
             if (! $whatsapp->isConfigured()) {
                 Log::warning('WhatsApp recibió un mensaje pero no está configurado para responder.');
+                $rastro?->marcar(WebhookHit::RESULTADO_IGNORADO, 'WhatsApp sin configurar');
 
                 return;
             }
@@ -90,6 +102,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
             $doctor = User::query()->orderBy('id')->first();
             if (! $doctor) {
                 Log::error('No hay ningún usuario (doctora) para atender el WhatsApp.');
+                $rastro?->marcar(WebhookHit::RESULTADO_ERROR, 'no hay usuario que atienda');
 
                 return;
             }
@@ -105,6 +118,8 @@ class ProcessWhatsAppMessage implements ShouldQueue
                         'Por ahora solo puedo leer mensajes de texto 😊 Cuéntame en qué te puedo ayudar.',
                     );
                 }
+
+                $rastro?->marcar(WebhookHit::RESULTADO_IGNORADO, 'mensaje sin texto');
 
                 return;
             }
@@ -169,6 +184,10 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 'media' => $this->guardarAdjunto($whatsapp, $conversation) ?: null,
             ]);
 
+            // Desde aquí el mensaje ya está en la bandeja: pase lo que pase
+            // después, no se perdió.
+            $rastro?->marcar(WebhookHit::RESULTADO_GUARDADO, null, $conversation->id);
+
             // Interruptor general: con el bot apagado el mensaje queda guardado y
             // visible en la bandeja, pero no se le responde a nadie. Sirve para
             // conectar el webhook sin que Lore empiece a escribirle a pacientes
@@ -177,6 +196,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 Log::info('Mensaje de WhatsApp recibido con el bot apagado; no se responde.', [
                     'conversation_id' => $conversation->id,
                 ]);
+                $rastro?->marcar(WebhookHit::RESULTADO_IGNORADO, 'bot apagado', $conversation->id);
 
                 return;
             }
@@ -189,6 +209,7 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 Log::info('Modo prueba activo: el número no está en la lista blanca, no se responde.', [
                     'conversation_id' => $conversation->id,
                 ]);
+                $rastro?->marcar(WebhookHit::RESULTADO_IGNORADO, 'modo prueba: fuera de la lista', $conversation->id);
 
                 return;
             }
@@ -211,12 +232,19 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // La doctora tomó el control de este chat: el mensaje queda guardado
             // y visible en la bandeja, pero el asistente no contesta.
             if (! $conversation->bot_enabled) {
+                $rastro?->marcar(
+                    WebhookHit::RESULTADO_IGNORADO,
+                    $conversation->needsHuman() ? 'chat escalado a una persona' : 'Lore en pausa en este chat',
+                    $conversation->id,
+                );
+
                 return;
             }
 
             $bot = BotService::fromUser($doctor);
             if (! $bot->isReady()) {
                 Log::warning('La IA no está configurada (falta ANTHROPIC_API_KEY); no se responde el WhatsApp.');
+                $rastro?->marcar(WebhookHit::RESULTADO_IGNORADO, 'IA sin configurar', $conversation->id);
 
                 return;
             }
@@ -252,11 +280,15 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 'content' => $result['text'],
                 'media' => $result['media'] ?: null,
             ]);
+
+            $rastro?->marcar(WebhookHit::RESULTADO_RESPONDIDO, null, $conversation->id);
         } catch (Throwable $e) {
             Log::error('Falló el procesamiento de un mensaje de WhatsApp', [
                 'from' => $this->from,
                 'error' => $e->getMessage(),
             ]);
+
+            $rastro?->marcar(WebhookHit::RESULTADO_ERROR, mb_substr($e->getMessage(), 0, 240));
 
             // Aviso de cortesía para que el paciente no quede sin respuesta.
             $whatsapp->sendText(

@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\WebhookHit;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -103,4 +104,15 @@ Schedule::command('resumen:diario')
  */
 Schedule::command('transfers:follow-up')
     ->hourly()
+    ->withoutOverlapping();
+
+/*
+ * El rastro del webhook no crece para siempre.
+ *
+ * `webhook_hits` gana una fila por cada mensaje que entra: sirve para demostrar
+ * qué nos entregó Meta, no para guardar historia. A los 90 días (ver
+ * WebhookHit::prunable) el caso que se quería probar ya se cerró.
+ */
+Schedule::command('model:prune', ['--model' => [WebhookHit::class]])
+    ->weekly()
     ->withoutOverlapping();

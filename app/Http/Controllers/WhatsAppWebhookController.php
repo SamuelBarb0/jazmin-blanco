@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\ProcessWhatsAppMessage;
 use App\Models\Appointment;
 use App\Models\DeliveryFailure;
+use App\Models\WebhookHit;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
@@ -106,13 +107,30 @@ class WhatsAppWebhookController extends Controller
                     $waId = data_get($message, 'id');
                     $from = data_get($message, 'from');
 
+                    // El rastro se deja ANTES que nada: es la prueba de que
+                    // Meta nos entregó esto. Lo que venga después —descartarlo
+                    // por incompleto, deduplicarlo, no responderlo— son
+                    // decisiones nuestras, y todas quedan anotadas como tales.
+                    // Sin esta fila, «no llegó» y «llegó y lo perdimos» son
+                    // indistinguibles: ver la migración de `webhook_hits`.
+                    $rastro = WebhookHit::anotar([
+                        'wamid' => $waId ? (string) $waId : null,
+                        'from_phone' => $from ? (string) $from : null,
+                        'phone_number_id' => $phoneNumberId ? (string) $phoneNumberId : null,
+                        'tipo' => (string) data_get($message, 'type'),
+                    ]);
+
                     if (blank($waId) || blank($from)) {
+                        $rastro?->marcar(WebhookHit::RESULTADO_IGNORADO, 'sin id o sin remitente');
+
                         continue;
                     }
 
                     // Deduplicación: Meta reintenta si tardamos; no procesamos
                     // dos veces el mismo mensaje.
                     if (! Cache::add('wa_msg_'.$waId, true, now()->addMinutes(10))) {
+                        $rastro?->marcar(WebhookHit::RESULTADO_DUPLICADO, 'reintento de Meta ya procesado');
+
                         continue;
                     }
 
@@ -123,7 +141,10 @@ class WhatsAppWebhookController extends Controller
                         referral: $this->extractReferral($message),
                         media: $this->extractMedia($message),
                         phoneNumberId: $phoneNumberId ? (string) $phoneNumberId : null,
+                        wamid: (string) $waId,
                     );
+
+                    $rastro?->marcar(WebhookHit::RESULTADO_ENCOLADO);
                 }
             }
         }
