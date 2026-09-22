@@ -160,10 +160,14 @@ class BotService
             // Respuesta final de texto.
             $text = collect($blocks)->where('type', 'text')->pluck('text')->implode("\n");
 
-            return $this->respond($this->guardaDeCitaInventada($text), $campaign, $alreadySent, $wantsResend, $conversation);
+            $guardado = $this->guardaDeCitaInventada($text);
+
+            // Si la guarda cambió el texto, lo que sale es el aviso de escalado
+            // y no una explicación del servicio: ahí no toca adjuntar nada.
+            return $this->respond($guardado, $campaign, $alreadySent, $wantsResend, $conversation, $guardado === $text);
         }
 
-        return $this->respond('Disculpa, tuve un inconveniente al procesar tu solicitud. ¿Lo intentamos de nuevo?', $campaign, $alreadySent, $wantsResend, $conversation);
+        return $this->respond('Disculpa, tuve un inconveniente al procesar tu solicitud. ¿Lo intentamos de nuevo?', $campaign, $alreadySent, $wantsResend, $conversation, false);
     }
 
     /**
@@ -270,7 +274,7 @@ class BotService
      *
      * @return array{text:string, media:array<int,array{type:string,url:?string,caption:string,service:string}>}
      */
-    private function respond(string $raw, ?Campaign $campaign, array $alreadySent, bool $wantsResend, Conversation $conversation): array
+    private function respond(string $raw, ?Campaign $campaign, array $alreadySent, bool $wantsResend, Conversation $conversation, bool $esRespuestaDelModelo = true): array
     {
         $result = $this->parseMedia($raw, $campaign, $alreadySent);
 
@@ -278,9 +282,102 @@ class BotService
             $result['media'] = $this->lastSentMedia($conversation);
         }
 
+        if ($esRespuestaDelModelo && empty($result['media'])) {
+            $result['media'] = $this->materialQueFalto($result['text'], $conversation, $campaign, $alreadySent);
+        }
+
         $result['text'] = $this->conDatosDePago($result['text']);
 
         return $result;
+    }
+
+    /**
+     * Fotos y videos del servicio del que se está hablando, cuando el modelo no
+     * escribió la etiqueta [[media:...]] y a la paciente todavía no le llegó
+     * nada de ese servicio.
+     *
+     * Caso de Oscar Muñoz (22/09/2026): llegó del anuncio de implante con «Quiero
+     * agendar mi cita de valoración para implante», Lore le explicó el implante
+     * capilar y NO mandó ninguna de sus 6 fotos y videos. La regla del prompt
+     * dice «si el paciente PREGUNTA por un servicio con material, mándalo», y
+     * un «quiero agendar» el modelo no lo leyó como pregunta. Ya pasó lo mismo
+     * el 03/08 con otra redacción de la regla: esto no se arregla pidiéndoselo
+     * mejor, se hace por código (igual que los datos de pago).
+     *
+     * El servicio sale, por este orden:
+     *  1. del que promociona el anuncio de origen, si la campaña tiene uno;
+     *  2. del nombre de un servicio con material que aparezca en la respuesta
+     *     de Lore o en el último mensaje de la paciente. Gana el nombre más
+     *     largo, para que «implante capilar de cejas» no mande las del
+     *     implante capilar a secas.
+     *
+     * Solo una vez por conversación y por servicio: si algo de ese servicio ya
+     * salió antes, no se repite nada (el reenvío a petición va por otro lado).
+     *
+     * @return array<int,array{type:string,url:?string,caption:string,service:string}>
+     */
+    private function materialQueFalto(string $respuesta, Conversation $conversation, ?Campaign $campaign, array $alreadySent): array
+    {
+        $servicio = $campaign?->service;
+
+        if (! $servicio || ! $this->tieneMaterial($servicio)) {
+            $ultimoDelPaciente = (string) $conversation->messages()
+                ->where('role', 'user')
+                ->latest('id')
+                ->value('content');
+
+            $servicio = $this->servicioNombradoEn($respuesta.' '.$ultimoDelPaciente);
+        }
+
+        if (! $servicio) {
+            return [];
+        }
+
+        $usable = $servicio->media->filter(fn ($m) => filled($m->resolved_url));
+
+        // Algo de este servicio ya le llegó: no se completa con el resto, que
+        // es mandarle otra vez la misma tanda por partes.
+        if ($usable->contains(fn ($m) => in_array($m->resolved_url, $alreadySent, true))) {
+            return [];
+        }
+
+        return $usable->map(fn ($m) => [
+            'type' => $m->type,
+            'url' => $m->resolved_url,
+            'caption' => $m->caption ?: $servicio->name,
+            'service' => $servicio->name,
+        ])->values()->all();
+    }
+
+    private function tieneMaterial(Service $servicio): bool
+    {
+        return $servicio->is_active
+            && $servicio->media->contains(fn ($m) => filled($m->resolved_url));
+    }
+
+    /**
+     * El servicio con material cuyo nombre completo aparece en el texto. Sin
+     * tildes ni mayúsculas, porque el modelo escribe «implante capilar» y el
+     * catálogo tiene «IMPLANTE CAPILAR DE CEJAS».
+     */
+    private function servicioNombradoEn(string $texto): ?Service
+    {
+        $texto = ' '.preg_replace('/\s+/', ' ', Str::lower(Str::ascii($texto))).' ';
+
+        return $this->user->services()
+            ->where('is_active', true)
+            ->with('media')
+            ->get()
+            ->filter(fn (Service $s) => $this->tieneMaterial($s))
+            ->filter(function (Service $s) use ($texto) {
+                $nombre = trim(preg_replace('/\s+/', ' ', Str::lower(Str::ascii($s->name))));
+
+                // Palabra completa: «implante capilar» no debe casar dentro de
+                // «implante capilares» ni de otra palabra más larga.
+                return $nombre !== '' && preg_match('/(?<![a-z0-9])'.preg_quote($nombre, '/').'(?![a-z0-9])/', $texto) === 1;
+            })
+            ->sortByDesc(fn (Service $s) => mb_strlen($s->name))
+            ->first();
     }
 
     /**
@@ -2075,7 +2172,7 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         {$schedulingBlock}
         # Material visual (fotos y videos)
         Algunos servicios tienen fotos o videos disponibles; en la base de conocimiento aparecen marcados como "Material visual disponible" con su identificador.
-        - Si el paciente pregunta por un servicio que TIENE material visual, MÁNDALO en ese mismo mensaje, junto a tu explicación. No hace falta que lo pida.
+        - Si el paciente pregunta por un servicio que TIENE material visual, o escribe para agendar ese servicio o su valoración («quiero agendar para implante»), MÁNDALO en ese mismo mensaje, junto a tu explicación. No hace falta que lo pida. Quien pide cita para un servicio también quiere ver resultados.
         - NUNCA preguntes "¿quieres que te comparta unas fotos?" ni "¿te gustaría ver imágenes?". Preguntarlo obliga al paciente a un turno más para algo que ya quería: envíalas directamente.
         - Preséntalo siempre como material de REFERENCIA del procedimiento, nunca como una transformación garantizada ni como comparación "antes y después": los resultados varían en cada paciente y dependen de la valoración médica.
         - Nunca hagas sentir mal al paciente con su apariencia, ni señales "defectos", para motivarlo a un tratamiento.
@@ -2246,7 +2343,7 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
                 $bits[] = $videos.' video'.($videos > 1 ? 's' : '');
             }
             $lines[] = 'Este anuncio tiene material visual propio ('.implode(' y ', $bits)
-                .'). Para enviárselo al paciente, escribe la etiqueta [[media:anuncio]] en una línea aparte, acompañada de una frase cálida y natural. Envíalo cuando ayude a generar confianza o cuando el paciente pida ver fotos, videos o resultados. El paciente no ve la etiqueta.';
+                .'). Para enviárselo al paciente, escribe la etiqueta [[media:anuncio]] en una línea aparte, acompañada de una frase cálida y natural. Envíalo en tu PRIMERA respuesta, sin preguntar si lo quiere: viene de ese anuncio y quiere ver resultados. El paciente no ve la etiqueta.';
         }
 
         // Solo la cabecera = no se averiguó nada útil (campaña sin servicio ni
