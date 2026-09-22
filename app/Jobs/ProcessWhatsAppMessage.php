@@ -9,6 +9,7 @@ use App\Models\WebhookHit;
 use App\Services\BotService;
 use App\Services\MetaAdsService;
 use App\Services\WhatsAppService;
+use App\Support\ConfirmacionDeAsistencia;
 use App\Support\PatientLeads;
 use App\Support\Settings;
 use Illuminate\Bus\Queueable;
@@ -188,6 +189,20 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // después, no se perdió.
             $rastro?->marcar(WebhookHit::RESULTADO_GUARDADO, null, $conversation->id);
 
+            // ¿Está confirmando su cita? Se registra ANTES de los interruptores:
+            // con Lore en pausa la paciente igual confirmó, y la doctora lo
+            // tiene que ver en la agenda.
+            $citaConfirmada = ConfirmacionDeAsistencia::esConfirmacionEscrita($this->text)
+                ? ConfirmacionDeAsistencia::citaDelTexto($conversation)
+                : null;
+            if ($citaConfirmada) {
+                ConfirmacionDeAsistencia::confirmar($citaConfirmada);
+            } elseif ($retractada = ConfirmacionDeAsistencia::citaQueSeRetracta($conversation, $this->text)) {
+                // Confirmó y enseguida se retracta («me equivoqué», «no puedo»):
+                // la agenda deja de decir que viene, y Lore sigue para reagendar.
+                ConfirmacionDeAsistencia::quitarConfirmacion($retractada);
+            }
+
             // Interruptor general: con el bot apagado el mensaje queda guardado y
             // visible en la bandeja, pero no se le responde a nadie. Sirve para
             // conectar el webhook sin que Lore empiece a escribirle a pacientes
@@ -237,6 +252,23 @@ class ProcessWhatsAppMessage implements ShouldQueue
                     $conversation->needsHuman() ? 'chat escalado a una persona' : 'Lore en pausa en este chat',
                     $conversation->id,
                 );
+
+                return;
+            }
+
+            // Confirmación sola («confirmo», «sí asistiré»): la respuesta es
+            // fija y no hace falta Lore. Si trae una pregunta («confirmo,
+            // ¿dónde parqueo?») sigue a Lore, que la contesta; la cita ya
+            // quedó confirmada arriba.
+            if ($citaConfirmada && ! str_contains($this->text, '?')) {
+                $respuesta = ConfirmacionDeAsistencia::respuesta($citaConfirmada);
+                $whatsapp->sendText($this->from, $respuesta);
+                $conversation->messages()->create([
+                    'role' => 'assistant',
+                    'sent_by' => 'bot',
+                    'content' => $respuesta,
+                ]);
+                $rastro?->marcar(WebhookHit::RESULTADO_RESPONDIDO, 'asistencia confirmada', $conversation->id);
 
                 return;
             }

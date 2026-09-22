@@ -11,6 +11,17 @@ class Appointment extends Model
 {
     public const STATUSES = ['scheduled', 'confirmed', 'completed', 'cancelled', 'no_show'];
 
+    protected static function booted(): void
+    {
+        static::saving(function (Appointment $cita): void {
+            // Confirmó ESA hora. Si la cita se mueve —la reagenda Lore o la
+            // doctora—, la confirmación ya no dice nada de la hora nueva.
+            if ($cita->exists && $cita->isDirty('starts_at') && ! $cita->isDirty('asistencia_confirmada_at')) {
+                $cita->asistencia_confirmada_at = null;
+            }
+        });
+    }
+
     protected $fillable = [
         'user_id',
         'lead_id',
@@ -43,6 +54,7 @@ class Appointment extends Model
             'reminder_2h_sent_at' => 'datetime',
             'reminder_24h_sent_at' => 'datetime',
             'transfer_pending_at' => 'datetime',
+            'asistencia_confirmada_at' => 'datetime',
             'notice_failed_at' => 'datetime',
         ];
     }

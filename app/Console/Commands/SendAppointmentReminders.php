@@ -58,6 +58,18 @@ class SendAppointmentReminders extends Command
      */
     private const PLANTILLA = 'Hola %s 👋 Te recordamos tu cita %s (%s) en %s. Si necesitas reprogramarla, respóndenos por este chat.';
 
+    /**
+     * El recordatorio que pide CONFIRMAR (22/09/2026): la plantilla
+     * `recordatorio_confirmar`. La de arriba solo hablaba de reprogramar, así
+     * que casi nadie confirmaba y la doctora no sabía quién iba a llegar.
+     * Igual que la otra, debe coincidir EXACTAMENTE con la aprobada.
+     *
+     * Se pide ESCRIBIR y no tocar un botón a propósito: la doctora prefirió
+     * que nadie quedara confirmado por un toque sin querer. El «confirmo» lo
+     * reconoce `ConfirmacionDeAsistencia`.
+     */
+    private const PLANTILLA_CONFIRMAR = 'Hola %s 👋 Te recordamos tu cita %s (%s) en %s. Por favor respóndenos CONFIRMO para confirmar tu asistencia. Si no puedes asistir, cuéntanos y te ayudamos a reprogramarla.';
+
     public function handle(): int
     {
         $dry = (bool) $this->option('dry-run');
@@ -138,7 +150,7 @@ class SendAppointmentReminders extends Command
                         continue;
                     }
 
-                    $texto = $this->mensaje($cita, $ahora, $tz);
+                    $texto = $this->mensaje($cita, $ahora, $tz, $config['template']);
 
                     if ($dry) {
                         $this->line("  <fg=cyan>[{$tipo}]</> {$cita->patient_name} · {$telefono} · ".$cita->starts_at->format('d/m H:i'));
@@ -328,9 +340,14 @@ class SendAppointmentReminders extends Command
      * lo que se guarda en el historial del chat es exactamente lo que le llegó
      * a la paciente, se haya enviado por plantilla o como texto libre.
      */
-    private function mensaje(Appointment $cita, Carbon $ahora, string $tz): string
+    private function mensaje(Appointment $cita, Carbon $ahora, string $tz, string $plantilla = ''): string
     {
-        return vsprintf(self::PLANTILLA, $this->parametros($cita, $ahora, $tz));
+        // La vieja `recordatorio_cita` sigue en uso hasta que Meta apruebe la
+        // nueva, y el historial debe guardar el texto que de verdad salió. El
+        // texto libre (sin plantilla) ya pide confirmar.
+        $cuerpo = $plantilla === 'recordatorio_cita' ? self::PLANTILLA : self::PLANTILLA_CONFIRMAR;
+
+        return vsprintf($cuerpo, $this->parametros($cita, $ahora, $tz));
     }
 
     private function primerNombre(Appointment $cita): string
