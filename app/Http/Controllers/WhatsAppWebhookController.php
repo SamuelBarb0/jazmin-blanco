@@ -142,6 +142,9 @@ class WhatsAppWebhookController extends Controller
                         media: $this->extractMedia($message),
                         phoneNumberId: $phoneNumberId ? (string) $phoneNumberId : null,
                         wamid: (string) $waId,
+                        // Los botones de plantilla traen aquí el id de la cita
+                        // («CONFIRMAR_CITA:123»); el texto visible no lo trae.
+                        botonPayload: data_get($message, 'button.payload') ? (string) data_get($message, 'button.payload') : null,
                     );
 
                     $rastro?->marcar(WebhookHit::RESULTADO_ENCOLADO);

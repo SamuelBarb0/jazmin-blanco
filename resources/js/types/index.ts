@@ -151,6 +151,10 @@ export interface Appointment {
     notice_failed_at: string | null;
     /** Lo que dijo Meta al rebotarlo, tal cual, para que se pueda actuar. */
     notice_failure: string | null;
+    /** Cuándo el recordatorio de la víspera salió. */
+    reminder_24h_sent_at: string | null;
+    /** Cuándo la paciente confirmó que asiste (botón o «confirmo» por WhatsApp). */
+    asistencia_confirmada_at: string | null;
     created_at: string;
     updated_at: string;
     service?: { id: number; name: string } | null;

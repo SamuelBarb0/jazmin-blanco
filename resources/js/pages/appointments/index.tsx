@@ -16,20 +16,53 @@ import {
     ChevronRight,
     Clock,
     FileText,
+    LoaderCircle,
     Mail,
     MessageCircle,
-    Phone,
-    Sparkles,
-    User,
-    LoaderCircle,
     Pencil,
+    Phone,
     Plus,
+    Sparkles,
     Trash2,
+    User,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { FormEventHandler, type ReactNode, useMemo, useState } from 'react';
 
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Agenda', href: '/appointments' }];
+
+/** Ya se le recordó, la cita sigue en pie y no ha confirmado. */
+function sinConfirmar(a: Appointment): boolean {
+    return (
+        !a.asistencia_confirmada_at &&
+        !!a.reminder_24h_sent_at &&
+        (a.status === 'scheduled' || a.status === 'confirmed') &&
+        new Date(a.starts_at).getTime() > Date.now()
+    );
+}
+
+/**
+ * Lo que la doctora necesita saber de un vistazo: quién confirmó que viene.
+ * «Sin confirmar» solo aparece cuando ya se le mandó el recordatorio; antes
+ * no hay nada que esperar de la paciente.
+ */
+function AsistenciaChip({ a }: { a: Appointment }) {
+    if (a.asistencia_confirmada_at) {
+        return (
+            <span className="mt-1 ml-1 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                <CheckCircle2 className="size-3" /> Confirmó asistencia
+            </span>
+        );
+    }
+    if (sinConfirmar(a)) {
+        return (
+            <span className="mt-1 ml-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                <Clock className="size-3" /> Sin confirmar
+            </span>
+        );
+    }
+    return null;
+}
 
 type ServiceOpt = { id: number; name: string; duration_minutes: number | null };
 type LeadOpt = { id: number; name: string; phone: string | null; email: string | null };
@@ -238,7 +271,12 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                         {googleConfigured && (
-                            <Button variant="outline" onClick={importFromGoogle} disabled={importing} title="Trae a la app las citas que ya tienes en tu Google Calendar">
+                            <Button
+                                variant="outline"
+                                onClick={importFromGoogle}
+                                disabled={importing}
+                                title="Trae a la app las citas que ya tienes en tu Google Calendar"
+                            >
                                 {importing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CalendarPlus className="h-4 w-4" />}
                                 Importar de Google
                             </Button>
@@ -263,7 +301,9 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                 )}
 
                 {flash?.success && (
-                    <div className="rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm font-medium text-primary">{flash.success}</div>
+                    <div className="border-primary/30 bg-primary/10 text-primary rounded-lg border px-4 py-3 text-sm font-medium">
+                        {flash.success}
+                    </div>
                 )}
 
                 {flash?.error && (
@@ -343,7 +383,11 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                                     {cell.items.slice(0, 4).map((a) => (
                                                         <span key={a.id} className={cn('size-1.5 rounded-full', statusMeta[a.status].dot)} />
                                                     ))}
-                                                    {cell.items.length > 4 && <span className="text-muted-foreground text-[9px] leading-none">+{cell.items.length - 4}</span>}
+                                                    {cell.items.length > 4 && (
+                                                        <span className="text-muted-foreground text-[9px] leading-none">
+                                                            +{cell.items.length - 4}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             )}
 
@@ -376,9 +420,7 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                     {/* Panel del día seleccionado */}
                     <div className="glass flex flex-col gap-3 rounded-2xl p-4">
                         <div className="flex items-start justify-between gap-2">
-                            <h2 className="text-sm font-medium capitalize leading-tight">
-                                {dayLongFmt.format(new Date(selectedKey + 'T00:00:00'))}
-                            </h2>
+                            <h2 className="text-sm leading-tight font-medium capitalize">{dayLongFmt.format(new Date(selectedKey + 'T00:00:00'))}</h2>
                             <Button variant="outline" size="sm" onClick={() => openNew(selectedKey)}>
                                 <Plus className="h-4 w-4" /> Cita
                             </Button>
@@ -413,10 +455,12 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                                         setDetail(a);
                                                     }
                                                 }}
-                                                className="bg-background/40 hover:bg-muted/40 group flex cursor-pointer items-center gap-3 rounded-xl border border-border/40 px-3 py-2.5 text-left transition-colors"
+                                                className="bg-background/40 hover:bg-muted/40 group border-border/40 flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors"
                                             >
                                                 <div className="flex w-14 shrink-0 flex-col items-center">
-                                                    <span className="font-display text-base leading-tight">{timeFmt.format(new Date(a.starts_at))}</span>
+                                                    <span className="font-display text-base leading-tight">
+                                                        {timeFmt.format(new Date(a.starts_at))}
+                                                    </span>
                                                     <span className="text-muted-foreground flex items-center gap-0.5 text-[10px]">
                                                         <Clock className="size-2.5" />
                                                         {timeFmt.format(new Date(a.ends_at))}
@@ -428,7 +472,12 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                                         {a.service?.name ?? 'Sin servicio'}
                                                         {a.patient_phone ? ` · ${a.patient_phone}` : ''}
                                                     </p>
-                                                    <span className={cn('mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium', st.className)}>
+                                                    <span
+                                                        className={cn(
+                                                            'mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+                                                            st.className,
+                                                        )}
+                                                    >
                                                         {st.label}
                                                         {googleConfigured &&
                                                             (a.google_sync_error ? (
@@ -437,6 +486,7 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                                                 <CheckCircle2 className="size-3 text-emerald-500" />
                                                             ) : null)}
                                                     </span>
+                                                    <AsistenciaChip a={a} />
                                                     {a.transfer_pending_at && (
                                                         <span className="mt-1 ml-1 inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">
                                                             <AlertTriangle className="size-3" /> Verificar transferencia
@@ -524,7 +574,12 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                             </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="patient_email">Correo</Label>
-                                <Input id="patient_email" type="email" value={data.patient_email} onChange={(e) => setData('patient_email', e.target.value)} />
+                                <Input
+                                    id="patient_email"
+                                    type="email"
+                                    value={data.patient_email}
+                                    onChange={(e) => setData('patient_email', e.target.value)}
+                                />
                                 <FieldError message={errors.patient_email} />
                             </div>
                         </div>
@@ -550,7 +605,13 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                             <div className="grid gap-2">
                                 <Label htmlFor="starts_at">Fecha y hora</Label>
-                                <Input id="starts_at" type="datetime-local" value={data.starts_at} onChange={(e) => setData('starts_at', e.target.value)} required />
+                                <Input
+                                    id="starts_at"
+                                    type="datetime-local"
+                                    value={data.starts_at}
+                                    onChange={(e) => setData('starts_at', e.target.value)}
+                                    required
+                                />
                                 <FieldError message={errors.starts_at} />
                             </div>
                             <div className="grid gap-2">
@@ -623,7 +684,9 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                 <InfoRow icon={Clock} label="Horario">
                                     {timeFmt.format(new Date(detail.starts_at))} – {timeFmt.format(new Date(detail.ends_at))}
                                 </InfoRow>
-                                <InfoRow icon={Sparkles} label="Servicio">{detail.service?.name ?? 'Sin servicio'}</InfoRow>
+                                <InfoRow icon={Sparkles} label="Servicio">
+                                    {detail.service?.name ?? 'Sin servicio'}
+                                </InfoRow>
                                 {detail.patient_phone && (
                                     <InfoRow icon={Phone} label="Teléfono">
                                         <span className="flex items-center gap-2">
@@ -646,8 +709,16 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                         </a>
                                     </InfoRow>
                                 )}
-                                {detail.lead && <InfoRow icon={User} label="Paciente del CRM">{detail.lead.name}</InfoRow>}
-                                {detail.notes && <InfoRow icon={FileText} label="Notas">{detail.notes}</InfoRow>}
+                                {detail.lead && (
+                                    <InfoRow icon={User} label="Paciente del CRM">
+                                        {detail.lead.name}
+                                    </InfoRow>
+                                )}
+                                {detail.notes && (
+                                    <InfoRow icon={FileText} label="Notas">
+                                        {detail.notes}
+                                    </InfoRow>
+                                )}
                                 <InfoRow icon={CalendarDays} label="Google Calendar">
                                     {detail.google_sync_error ? (
                                         <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
@@ -669,15 +740,27 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                 </p>
                             )}
 
+                            {detail.asistencia_confirmada_at ? (
+                                <p className="flex items-center gap-1.5 rounded-lg border border-emerald-300/60 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                    <CheckCircle2 className="size-4 shrink-0" /> Confirmó su asistencia por WhatsApp el{' '}
+                                    {new Date(detail.asistencia_confirmada_at).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })}
+                                </p>
+                            ) : (
+                                sinConfirmar(detail) && (
+                                    <p className="flex items-center gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                                        <AlertTriangle className="size-4 shrink-0" /> Se le envió el recordatorio y todavía no confirma.
+                                    </p>
+                                )
+                            )}
+
                             {detail.notice_failed_at && (
                                 <div className="space-y-2 rounded-lg border border-red-300/60 bg-red-50 px-3 py-3 dark:border-red-500/30 dark:bg-red-500/10">
                                     <p className="flex items-center gap-1.5 text-sm font-medium text-red-800 dark:text-red-300">
                                         <AlertTriangle className="size-4 shrink-0" /> El aviso de WhatsApp no le llegó
                                     </p>
                                     <p className="text-xs text-red-800/80 dark:text-red-300/80">
-                                        WhatsApp aceptó el mensaje y después lo devolvió: <strong>{detail.notice_failure}</strong>. Casi siempre
-                                        es que el número está mal escrito. Corrígelo aquí mismo con «Editar» y el aviso se reenvía solo al
-                                        número nuevo.
+                                        WhatsApp aceptó el mensaje y después lo devolvió: <strong>{detail.notice_failure}</strong>. Casi siempre es
+                                        que el número está mal escrito. Corrígelo aquí mismo con «Editar» y el aviso se reenvía solo al número nuevo.
                                     </p>
                                 </div>
                             )}
@@ -688,8 +771,8 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
                                         <AlertTriangle className="size-4 shrink-0" /> Transferencia sin verificar
                                     </p>
                                     <p className="text-xs text-orange-800/80 dark:text-orange-300/80">
-                                        La paciente eligió pagar por transferencia o Nequi, así que el cupo se apartó sin comprobante.
-                                        Revisa en el banco que el dinero llegó antes de atenderla.
+                                        La paciente eligió pagar por transferencia o Nequi, así que el cupo se apartó sin comprobante. Revisa en el
+                                        banco que el dinero llegó antes de atenderla.
                                     </p>
                                     <Button size="sm" onClick={() => verifyTransfer(detail)}>
                                         <CheckCircle2 className="h-4 w-4" /> Ya recibí el pago
@@ -729,7 +812,7 @@ export default function AppointmentsIndex({ appointments, services, leads, statu
 
 function InfoRow({ icon: Icon, label, children }: { icon: typeof Clock; label: string; children: ReactNode }) {
     return (
-        <div className="flex items-start gap-3 border-b border-border/30 py-2 last:border-0">
+        <div className="border-border/30 flex items-start gap-3 border-b py-2 last:border-0">
             <Icon className="text-muted-foreground mt-0.5 size-4 shrink-0" />
             <div className="min-w-0 flex-1">
                 <p className="text-muted-foreground text-xs">{label}</p>

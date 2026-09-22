@@ -19,6 +19,7 @@ use RuntimeException;
 class GoogleCalendarService
 {
     private const SCOPE = 'https://www.googleapis.com/auth/calendar';
+
     private const API = 'https://www.googleapis.com/calendar/v3';
 
     /**
@@ -29,8 +30,7 @@ class GoogleCalendarService
         private readonly ?string $calendarId = null,
         private readonly string $timezone = 'America/Bogota',
         private readonly bool $oauth = false,
-    ) {
-    }
+    ) {}
 
     public static function fromConfig(): self
     {
@@ -260,6 +260,9 @@ class GoogleCalendarService
         // marca es que salte a la vista sin abrir el evento.
         if ($appointment->transfer_pending_at) {
             $summary = '⚠️ VERIFICAR TRANSFERENCIA — '.$summary;
+        } elseif ($appointment->asistencia_confirmada_at) {
+            // Delante por lo mismo: que en la vista de mes se lea sin abrirla.
+            $summary = '✅ CONFIRMÓ — '.$summary;
         }
 
         $descriptionLines = array_filter([

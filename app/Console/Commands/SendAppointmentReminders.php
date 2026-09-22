@@ -7,6 +7,7 @@ use App\Models\Conversation;
 use App\Models\ReminderOptOut;
 use App\Models\User;
 use App\Services\WhatsAppService;
+use App\Support\ConfirmacionDeAsistencia;
 use App\Support\PatientLeads;
 use App\Support\Settings;
 use Illuminate\Console\Command;
@@ -57,6 +58,21 @@ class SendAppointmentReminders extends Command
      * y si cerrara la frase quedaría un doble punto.
      */
     private const PLANTILLA = 'Hola %s 👋 Te recordamos tu cita %s (%s) en %s. Si necesitas reprogramarla, respóndenos por este chat.';
+
+    /**
+     * La plantilla `confirmar_cita` (22/09/2026): pide CONFIRMAR y trae dos
+     * botones, «Confirmo mi asistencia» y «Necesito reprogramar». La anterior
+     * solo hablaba de reprogramar, así que casi nadie confirmaba y la doctora
+     * no sabía quién iba a llegar. Igual que arriba, debe coincidir
+     * EXACTAMENTE con el cuerpo aprobado en el WhatsApp Manager.
+     */
+    private const PLANTILLA_CONFIRMAR = 'Hola %s 👋 Te recordamos tu cita %s (%s) en %s. Por favor confirma tu asistencia tocando «Confirmo mi asistencia». Si no puedes asistir, toca «Necesito reprogramar» y te ayudamos a buscar otro horario.';
+
+    /**
+     * Sin plantilla (texto libre, solo dentro de la ventana de 24 h) no hay
+     * botones: se le pide que conteste «CONFIRMO», que el webhook reconoce.
+     */
+    private const TEXTO_LIBRE = 'Hola %s 👋 Te recordamos tu cita %s (%s) en %s. Por favor respóndenos CONFIRMO para confirmar tu asistencia. Si no puedes asistir, cuéntanos y te ayudamos a reprogramarla.';
 
     public function handle(): int
     {
@@ -138,7 +154,7 @@ class SendAppointmentReminders extends Command
                         continue;
                     }
 
-                    $texto = $this->mensaje($cita, $ahora, $tz);
+                    $texto = $this->mensaje($cita, $ahora, $tz, $config['template']);
 
                     if ($dry) {
                         $this->line("  <fg=cyan>[{$tipo}]</> {$cita->patient_name} · {$telefono} · ".$cita->starts_at->format('d/m H:i'));
@@ -169,7 +185,13 @@ class SendAppointmentReminders extends Command
 
                     try {
                         $ok = $config['template']
-                            ? $whatsapp->sendTemplate($telefono, $config['template'], $config['language'], $this->parametros($cita, $ahora, $tz))
+                            ? $whatsapp->sendTemplate(
+                                $telefono,
+                                $config['template'],
+                                $config['language'],
+                                $this->parametros($cita, $ahora, $tz),
+                                $this->botones($config['template'], $cita),
+                            )
                             : $whatsapp->sendText($telefono, $texto);
                     } catch (Throwable $e) {
                         $ok = false;
@@ -328,9 +350,34 @@ class SendAppointmentReminders extends Command
      * lo que se guarda en el historial del chat es exactamente lo que le llegó
      * a la paciente, se haya enviado por plantilla o como texto libre.
      */
-    private function mensaje(Appointment $cita, Carbon $ahora, string $tz): string
+    private function mensaje(Appointment $cita, Carbon $ahora, string $tz, string $plantilla = ''): string
     {
-        return vsprintf(self::PLANTILLA, $this->parametros($cita, $ahora, $tz));
+        $cuerpo = match ($plantilla) {
+            ConfirmacionDeAsistencia::PLANTILLA => self::PLANTILLA_CONFIRMAR,
+            '' => self::TEXTO_LIBRE,
+            default => self::PLANTILLA,
+        };
+
+        return vsprintf($cuerpo, $this->parametros($cita, $ahora, $tz));
+    }
+
+    /**
+     * Payloads de los botones: llevan el id de la cita, así el webhook sabe
+     * qué cita confirmar sin adivinar. Solo la plantilla con botones los
+     * lleva; mandárselos a `recordatorio_cita` haría que Meta la rechazara.
+     *
+     * @return list<string>
+     */
+    private function botones(string $plantilla, Appointment $cita): array
+    {
+        if ($plantilla !== ConfirmacionDeAsistencia::PLANTILLA) {
+            return [];
+        }
+
+        return [
+            ConfirmacionDeAsistencia::payload(ConfirmacionDeAsistencia::PAYLOAD_CONFIRMAR, $cita),
+            ConfirmacionDeAsistencia::payload(ConfirmacionDeAsistencia::PAYLOAD_REPROGRAMAR, $cita),
+        ];
     }
 
     private function primerNombre(Appointment $cita): string

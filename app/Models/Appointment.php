@@ -43,6 +43,7 @@ class Appointment extends Model
             'reminder_2h_sent_at' => 'datetime',
             'reminder_24h_sent_at' => 'datetime',
             'transfer_pending_at' => 'datetime',
+            'asistencia_confirmada_at' => 'datetime',
             'notice_failed_at' => 'datetime',
         ];
     }
