@@ -60,6 +60,16 @@ class BotService
      */
     private ?string $datosPagoPorAnexar = null;
 
+    /**
+     * ¿Se tocó de verdad la agenda en este turno?
+     *
+     * Se enciende cuando agendar_cita, reagendar_cita o cancelar_cita SÍ
+     * hicieron lo que dicen. Lo mira `guardaDeCitaInventada()` antes de mandar
+     * la respuesta: sin esto, Lore puede decirle a la paciente que su cita
+     * quedó lista sin que exista.
+     */
+    private bool $agendaTocadaEnEsteTurno = false;
+
     public function __construct(
         private readonly User $user,
         private readonly AnthropicService $ai,
@@ -100,6 +110,9 @@ class BotService
     public function reply(Conversation $conversation, ?Campaign $campaign = null): array
     {
         $this->conversation = $conversation;
+        // Vale para ESTE turno: lo que se agendó en el anterior no autoriza a
+        // confirmar nada en este.
+        $this->agendaTocadaEnEsteTurno = false;
 
         $messages = $conversation->messages()
             ->orderBy('id')
@@ -147,10 +160,77 @@ class BotService
             // Respuesta final de texto.
             $text = collect($blocks)->where('type', 'text')->pluck('text')->implode("\n");
 
-            return $this->respond($text, $campaign, $alreadySent, $wantsResend, $conversation);
+            return $this->respond($this->guardaDeCitaInventada($text), $campaign, $alreadySent, $wantsResend, $conversation);
         }
 
         return $this->respond('Disculpa, tuve un inconveniente al procesar tu solicitud. ¿Lo intentamos de nuevo?', $campaign, $alreadySent, $wantsResend, $conversation);
+    }
+
+    /**
+     * Impide que Lore diga que agendó, movió o canceló una cita que no tocó.
+     *
+     * Pasó el 22/09/2026: la cita de la paciente ya no existía (la habían
+     * borrado del panel), `reagendar_cita` respondió «no encuentro ninguna
+     * cita... NO le digas que se la moviste», y treinta segundos después Lore
+     * escribió «¡Listo! Encontré tu cita y la reprogramé para hoy a las 4:00
+     * p. m.». La paciente llegó a una cita que la agenda no tenía.
+     *
+     * La instrucción en el resultado de la herramienta ya existía y no bastó,
+     * así que esto no se arregla pidiéndoselo mejor al modelo: si el texto
+     * afirma un cambio en la agenda y NINGUNA herramienta lo hizo en este
+     * turno, el mensaje no sale. En su lugar el chat queda escalado, que es
+     * justo lo que la herramienta le había pedido hacer.
+     */
+    private function guardaDeCitaInventada(string $text): string
+    {
+        if ($this->agendaTocadaEnEsteTurno || trim($text) === '') {
+            return $text;
+        }
+
+        // Solo frases que afirman un CAMBIO hecho ya. Describir una cita que la
+        // paciente sí tiene («tu cita es el jueves a las 8») no es una promesa
+        // y tiene que poder decirse sin llamar a ninguna herramienta.
+        $afirmaciones = [
+            '/\b(?:te\s+la\s+|se\s+la\s+|la\s+)?(?:reprogram|reagend|agend|cancel)(?:é|e)\b/iu',
+            '/\b(?:ya\s+)?(?:qued[óo]|est[áa])\s+(?:lista|agendada|reprogramada|reagendada|cancelada|confirmada|movida)\b/iu',
+            '/\bcita\s+(?:ya\s+)?(?:qued[óo]|est[áa])\s+(?:lista|agendada|reprogramada|cancelada|confirmada)\b/iu',
+            '/\bla\s+mov[íi]\b/iu',
+            '/\bencontr[ée]\s+tu\s+cita\b/iu',
+        ];
+
+        $afirma = false;
+        foreach ($afirmaciones as $patron) {
+            if (preg_match($patron, $text)) {
+                $afirma = true;
+                break;
+            }
+        }
+
+        if (! $afirma) {
+            return $text;
+        }
+
+        // A nivel ERROR a propósito: producción corre con LOG_LEVEL=error y
+        // esto es exactamente lo que hay que ver cuando pasa.
+        Log::error('El asistente afirmó un cambio de cita que no hizo: mensaje bloqueado', [
+            'conversation_id' => $this->conversation?->id,
+            'texto' => Str::limit($text, 500),
+        ]);
+
+        $conversation = $this->conversation;
+
+        if ($conversation?->exists && $conversation->channel !== 'panel') {
+            $conversation->forceFill([
+                'bot_enabled' => false,
+                'bot_paused_at' => now(),
+                'escalated_at' => now(),
+                'escalation_reason' => Str::limit(
+                    'La asistente iba a confirmar una cita que NO quedó registrada. Revisa la agenda de esta paciente y respóndele tú.', 490),
+            ])->save();
+        }
+
+        return 'Déjame confirmar ese cambio con el equipo del consultorio para no darte una hora equivocada 😊 '
+            .'Una persona te escribe por este mismo chat enseguida 💙';
     }
 
     /**
@@ -1239,6 +1319,8 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
                 $ya = $link->appointment;
                 $cuando = $ya?->starts_at?->format('Y-m-d h:i a') ?? 'la hora acordada';
 
+                $this->agendaTocadaEnEsteTurno = true;
+
                 return "La cita YA está agendada para {$cuando} (se agendó sola en cuanto entró el pago). "
                     .'NO vuelvas a agendar: solo confírmasela con calidez y recuérdale la dirección.';
             }
@@ -1249,6 +1331,8 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         if ($link && $resultado['appointment']) {
             $link->forceFill(['appointment_id' => $resultado['appointment']->id])->save();
         }
+
+        $this->agendaTocadaEnEsteTurno = $resultado['appointment'] !== null;
 
         return $resultado['message'];
     }
@@ -1531,6 +1615,7 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
             'notes' => mb_substr(trim($notas !== '' ? $notas."\n".$nota : $nota), 0, 2000),
         ])->save();
 
+        $this->agendaTocadaEnEsteTurno = true;
         $avisoAgenda = '';
 
         try {
@@ -1632,6 +1717,8 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
             'reminder_2h_sent_at' => null,
             'notes' => mb_substr(trim($notas !== '' ? $notas."\n".$nota : $nota), 0, 2000),
         ])->save();
+
+        $this->agendaTocadaEnEsteTurno = true;
 
         Log::info('El asistente canceló una cita', [
             'appointment_id' => $cita->id,
