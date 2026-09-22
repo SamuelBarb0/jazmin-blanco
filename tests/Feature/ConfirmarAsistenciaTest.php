@@ -197,6 +197,45 @@ class ConfirmarAsistenciaTest extends TestCase
         $this->assertSame(0, $this->chat->messages()->where('role', 'assistant')->count());
     }
 
+    public function test_si_se_equivoco_de_boton_la_confirmacion_se_quita_y_lore_sigue(): void
+    {
+        $this->tocaBoton('CONFIRMAR_CITA:'.$this->cita->id);
+        $this->assertNotNull($this->cita->fresh()->asistencia_confirmada_at);
+        $this->assertStringContainsString('¿Te equivocaste de botón', $this->loQueSeLeContesto());
+
+        $this->escribe('Uy perdón, me equivoqué, esa hora no me queda');
+
+        $this->assertNull($this->cita->fresh()->asistencia_confirmada_at);
+        $this->assertTrue($this->seLlamoALore());
+    }
+
+    public function test_un_gracias_despues_de_confirmar_no_quita_nada(): void
+    {
+        $this->tocaBoton('CONFIRMAR_CITA:'.$this->cita->id);
+
+        $this->escribe('Perfecto, gracias!');
+
+        $this->assertNotNull($this->cita->fresh()->asistencia_confirmada_at);
+    }
+
+    public function test_mover_la_cita_borra_la_confirmacion_de_la_hora_vieja(): void
+    {
+        $this->cita->forceFill(['asistencia_confirmada_at' => now()])->save();
+
+        $this->cita->update(['starts_at' => now()->addDays(3), 'ends_at' => now()->addDays(3)->addHour()]);
+
+        $this->assertNull($this->cita->fresh()->asistencia_confirmada_at);
+    }
+
+    public function test_editar_otra_cosa_no_borra_la_confirmacion(): void
+    {
+        $this->cita->forceFill(['asistencia_confirmada_at' => now()])->save();
+
+        $this->cita->update(['notes' => 'Trae exámenes']);
+
+        $this->assertNotNull($this->cita->fresh()->asistencia_confirmada_at);
+    }
+
     /** Las respuestas reales de las pacientes a los recordatorios de esa semana. */
     public function test_reconoce_las_respuestas_reales(): void
     {

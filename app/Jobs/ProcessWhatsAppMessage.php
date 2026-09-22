@@ -201,6 +201,10 @@ class ProcessWhatsAppMessage implements ShouldQueue
             }
             if ($citaConfirmada) {
                 ConfirmacionDeAsistencia::confirmar($citaConfirmada);
+            } elseif ($retractada = ConfirmacionDeAsistencia::citaQueSeRetracta($conversation, $this->text)) {
+                // Tocó «Confirmo» sin querer o le surgió algo: la agenda deja
+                // de decir que viene, y Lore sigue para reagendar.
+                ConfirmacionDeAsistencia::quitarConfirmacion($retractada);
             }
 
             // Interruptor general: con el bot apagado el mensaje queda guardado y

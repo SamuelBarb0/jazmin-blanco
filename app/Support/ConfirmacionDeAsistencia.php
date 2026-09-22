@@ -152,7 +152,61 @@ class ConfirmacionDeAsistencia
         $nombre = trim(explode(' ', trim((string) ($cita->lead?->name ?: $cita->patient_name)))[0] ?? '');
         $saludo = $nombre !== '' ? '¡Gracias, '.mb_convert_case($nombre, MB_CASE_TITLE, 'UTF-8').'!' : '¡Gracias!';
 
-        return "{$saludo} ✅ Tu asistencia quedó confirmada para el {$cuando}. Te esperamos 💙";
+        return "{$saludo} ✅ Tu asistencia quedó confirmada para el {$cuando}. Te esperamos 💙\n\n"
+            .'¿Te equivocaste de botón o te surgió algo? Escríbenos y lo corregimos.';
+    }
+
+    /**
+     * La paciente se retracta justo después de confirmar: tocó el botón sin
+     * querer, o le surgió algo. Devuelve la cita a la que hay que quitarle la
+     * confirmación, o null.
+     *
+     * Solo cuenta como retracto si lo ÚLTIMO que le mandamos fue el «quedó
+     * confirmada»: un «no puedo» suelto semanas después es otra conversación,
+     * y la reagenda o cancelación ya la maneja Lore.
+     */
+    public static function citaQueSeRetracta(Conversation $conversacion, string $texto): ?Appointment
+    {
+        $t = mb_strtolower(trim($texto));
+        if (! preg_match('/\b(me equivoqu\w*|error|sin querer|no (puedo|podr[eé]|voy|ir[eé]|asist\w*|alcanzo)|no me queda|reprogram\w*|reagend\w*|cambiar\w*|cancel\w*)\b/u', $t)) {
+            return null;
+        }
+
+        $ultimoNuestro = $conversacion->messages()
+            ->where('role', 'assistant')
+            ->latest('id')
+            ->first(['content', 'created_at']);
+
+        if (! $ultimoNuestro
+            || ! str_contains((string) $ultimoNuestro->content, 'Tu asistencia quedó confirmada')
+            || $ultimoNuestro->created_at->lt(now()->subHours(self::HORAS_VALIDEZ_TEXTO))) {
+            return null;
+        }
+
+        return Appointment::query()
+            ->where('lead_id', $conversacion->lead_id)
+            ->whereNotNull('asistencia_confirmada_at')
+            ->where('starts_at', '>=', now()->subHour())
+            ->orderBy('starts_at')
+            ->first();
+    }
+
+    public static function quitarConfirmacion(Appointment $cita): void
+    {
+        $cita->forceFill(['asistencia_confirmada_at' => null])->save();
+
+        if (! filled($cita->google_event_id) || ! Settings::hasGoogleCalendar()) {
+            return;
+        }
+
+        try {
+            GoogleCalendarService::fromConfig()->updateEvent($cita);
+        } catch (Throwable $e) {
+            Log::warning('Se quitó la confirmación, pero no se pudo actualizar Google Calendar.', [
+                'appointment_id' => $cita->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private static function ultimos10(?string $telefono): string
