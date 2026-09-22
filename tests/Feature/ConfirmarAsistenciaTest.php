@@ -98,6 +98,7 @@ class ConfirmarAsistenciaTest extends TestCase
 
     private function yaSeLeRecordo(): void
     {
+        $this->cita->forceFill(['reminder_24h_sent_at' => now()])->save();
         $this->chat->messages()->create([
             'role' => 'assistant',
             'content' => 'Hola Martha 👋 Te recordamos tu cita mañana (miércoles 23 de septiembre a las 10:00 am) en el consultorio. Por favor respóndenos CONFIRMO para confirmar tu asistencia. Si no puedes asistir, cuéntanos y te ayudamos a reprogramarla.',
@@ -125,9 +126,34 @@ class ConfirmarAsistenciaTest extends TestCase
         $this->assertFalse($this->seLlamoALore());
     }
 
+    /**
+     * Caso de Flor Elena (visto en producción el 22/09/2026): contestó
+     * «Confirmo la cita para mañana 8:00 am» cuando esa cita ya había pasado,
+     * y su siguiente cita era el 29/09, de la que nadie le había preguntado.
+     */
+    public function test_una_respuesta_tardia_no_confirma_otra_cita_que_no_se_recordo(): void
+    {
+        $this->cita->forceFill([
+            'starts_at' => now()->subHours(5), 'ends_at' => now()->subHours(4), 'reminder_24h_sent_at' => now()->subDay(),
+        ])->save();
+        $siguiente = Appointment::create([
+            'user_id' => $this->doctora->id, 'lead_id' => $this->lead->id, 'patient_name' => 'Martha Lucía Pérez',
+            'starts_at' => now()->addDays(7), 'ends_at' => now()->addDays(7)->addHour(), 'status' => 'scheduled',
+        ]);
+        $this->chat->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Hola Martha 👋 Te recordamos tu cita mañana (…) en el consultorio. Si necesitas reprogramarla, respóndenos por este chat.',
+        ]);
+
+        $this->escribe('Confirmo la cita para mañana 8:00 am');
+
+        $this->assertNull($siguiente->fresh()->asistencia_confirmada_at);
+    }
+
     public function test_tambien_vale_tras_el_recordatorio_viejo(): void
     {
         // El que sigue saliendo hasta que Meta apruebe el nuevo.
+        $this->cita->forceFill(['reminder_24h_sent_at' => now()])->save();
         $this->chat->messages()->create([
             'role' => 'assistant',
             'content' => 'Hola Martha 👋 Te recordamos tu cita mañana (miércoles 23 de septiembre a las 10:00 am) en el consultorio. Si necesitas reprogramarla, respóndenos por este chat.',

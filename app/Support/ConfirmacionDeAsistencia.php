@@ -63,10 +63,19 @@ class ConfirmacionDeAsistencia
             return null;
         }
 
+        // La cita que se RECORDÓ, no «la próxima de la paciente». Si contesta
+        // tarde —la cita recordada ya pasó—, la próxima puede ser otra que
+        // nadie le ha preguntado. Pasó al revisarlo en producción: «Confirmo
+        // la cita para mañana» de una cita ya atendida se iba a pegar a la del
+        // 29/09.
+        $desde = now()->subHours(self::HORAS_VALIDEZ_TEXTO);
+
         return Appointment::query()
             ->where('lead_id', $conversacion->lead_id)
             ->whereIn('status', ['scheduled', 'confirmed'])
             ->where('starts_at', '>=', now()->subHour())
+            ->where(fn ($q) => $q->where('reminder_24h_sent_at', '>=', $desde)
+                ->orWhere('reminder_2h_sent_at', '>=', $desde))
             ->orderBy('starts_at')
             ->first();
     }
