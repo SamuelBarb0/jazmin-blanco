@@ -16,58 +16,19 @@ use Throwable;
  * varias pacientes escribían «Confirmo», nada lo registraba: las 32 citas de
  * la semana seguían igual y ella tenía que confirmar a mano una por una.
  *
- * Dos vías, las dos por código y sin pasar por Lore:
- *  - el botón «Confirmo mi asistencia» de la plantilla `confirmar_cita`, que
- *    trae en el payload el id de LA cita (no hay que adivinar cuál);
- *  - un «confirmo» escrito, pero solo como respuesta a un recordatorio. Fuera
- *    de ese contexto la palabra puede significar cualquier cosa.
+ * El recordatorio (plantilla `recordatorio_confirmar`) pide responder
+ * CONFIRMO. Se reconoce por código y sin pasar por Lore, pero solo como
+ * respuesta a un recordatorio: fuera de ese contexto «confirmo» puede
+ * significar cualquier cosa. Sin botones a propósito: la doctora prefirió que
+ * nadie quedara confirmado por un toque sin querer.
  */
 class ConfirmacionDeAsistencia
 {
-    /** Nombre de la plantilla con botones, tal como está en el WhatsApp Manager. */
-    public const PLANTILLA = 'confirmar_cita';
-
-    public const PAYLOAD_CONFIRMAR = 'CONFIRMAR_CITA';
-
-    public const PAYLOAD_REPROGRAMAR = 'REPROGRAMAR_CITA';
-
     /**
      * Cuánto después del recordatorio se sigue entendiendo un «confirmo»
      * escrito como respuesta a él. Cubre el de 24 h y el de 2 h.
      */
     private const HORAS_VALIDEZ_TEXTO = 48;
-
-    public static function payload(string $accion, Appointment $cita): string
-    {
-        return $accion.':'.$cita->id;
-    }
-
-    /**
-     * La cita a la que apunta el botón, siempre que sea de quien lo tocó. El
-     * payload viaja por Meta; se comprueba el teléfono para que un payload
-     * copiado o viejo no confirme la cita de otra persona.
-     */
-    public static function citaDelBoton(?string $payload, string $telefono): ?Appointment
-    {
-        if (! $payload || ! preg_match('/^'.self::PAYLOAD_CONFIRMAR.':(\d+)$/', $payload, $m)) {
-            return null;
-        }
-
-        $cita = Appointment::query()->with('lead:id,phone')->find((int) $m[1]);
-        if (! $cita || in_array($cita->status, ['cancelled', 'completed', 'no_show'], true)) {
-            return null;
-        }
-
-        $mio = self::ultimos10($telefono);
-        $suyos = array_filter([self::ultimos10($cita->lead?->phone), self::ultimos10($cita->patient_phone)]);
-
-        return $mio !== '' && in_array($mio, $suyos, true) ? $cita : null;
-    }
-
-    public static function esBotonReprogramar(?string $payload): bool
-    {
-        return $payload !== null && str_starts_with($payload, self::PAYLOAD_REPROGRAMAR.':');
-    }
 
     /**
      * ¿El texto confirma asistencia? «Confirmo», «sí asistiré», «ok confirmo la
@@ -93,28 +54,45 @@ class ConfirmacionDeAsistencia
     /**
      * La cita que un «confirmo» escrito está confirmando: la próxima de esa
      * paciente, siempre que lo último que le mandamos haya sido un
-     * recordatorio reciente.
+     * recordatorio reciente. Vale para la plantilla vieja y la nueva: las dos
+     * dicen «Te recordamos tu cita».
      */
     public static function citaDelTexto(Conversation $conversacion): ?Appointment
     {
-        if (! $conversacion->lead_id) {
-            return null;
-        }
-
-        $ultimoNuestro = $conversacion->messages()
-            ->where('role', 'assistant')
-            ->latest('id')
-            ->first(['content', 'created_at']);
-
-        if (! $ultimoNuestro
-            || ! str_contains((string) $ultimoNuestro->content, 'Te recordamos tu cita')
-            || $ultimoNuestro->created_at->lt(now()->subHours(self::HORAS_VALIDEZ_TEXTO))) {
+        if (! $conversacion->lead_id || ! self::loUltimoNuestroDice($conversacion, 'Te recordamos tu cita')) {
             return null;
         }
 
         return Appointment::query()
             ->where('lead_id', $conversacion->lead_id)
             ->whereIn('status', ['scheduled', 'confirmed'])
+            ->where('starts_at', '>=', now()->subHour())
+            ->orderBy('starts_at')
+            ->first();
+    }
+
+    /**
+     * La paciente se retracta justo después de confirmar: se equivocó o le
+     * surgió algo. Devuelve la cita a la que hay que quitarle la confirmación.
+     *
+     * Solo cuenta si lo ÚLTIMO que le mandamos fue el «quedó confirmada»: un
+     * «no puedo» suelto semanas después es otra conversación, y la reagenda o
+     * cancelación ya la maneja Lore.
+     */
+    public static function citaQueSeRetracta(Conversation $conversacion, string $texto): ?Appointment
+    {
+        $t = mb_strtolower(trim($texto));
+        if (! preg_match('/\b(me equivoqu\w*|error|sin querer|no (puedo|podr[eé]|voy|ir[eé]|asist\w*|alcanzo)|no me queda|reprogram\w*|reagend\w*|cambiar\w*|cancel\w*)\b/u', $t)) {
+            return null;
+        }
+
+        if (! $conversacion->lead_id || ! self::loUltimoNuestroDice($conversacion, 'Tu asistencia quedó confirmada')) {
+            return null;
+        }
+
+        return Appointment::query()
+            ->where('lead_id', $conversacion->lead_id)
+            ->whereNotNull('asistencia_confirmada_at')
             ->where('starts_at', '>=', now()->subHour())
             ->orderBy('starts_at')
             ->first();
@@ -130,18 +108,14 @@ class ConfirmacionDeAsistencia
             $cita->forceFill(['asistencia_confirmada_at' => now()])->save();
         }
 
-        if (! filled($cita->google_event_id) || ! Settings::hasGoogleCalendar()) {
-            return;
-        }
+        self::reflejarEnGoogle($cita);
+    }
 
-        try {
-            GoogleCalendarService::fromConfig()->updateEvent($cita);
-        } catch (Throwable $e) {
-            Log::warning('La asistencia quedó confirmada, pero no se pudo marcar en Google Calendar.', [
-                'appointment_id' => $cita->id,
-                'error' => $e->getMessage(),
-            ]);
-        }
+    public static function quitarConfirmacion(Appointment $cita): void
+    {
+        $cita->forceFill(['asistencia_confirmada_at' => null])->save();
+
+        self::reflejarEnGoogle($cita);
     }
 
     /** Lo que se le contesta a la paciente. Fijo: no hay nada que decidir. */
@@ -153,48 +127,23 @@ class ConfirmacionDeAsistencia
         $saludo = $nombre !== '' ? '¡Gracias, '.mb_convert_case($nombre, MB_CASE_TITLE, 'UTF-8').'!' : '¡Gracias!';
 
         return "{$saludo} ✅ Tu asistencia quedó confirmada para el {$cuando}. Te esperamos 💙\n\n"
-            .'¿Te equivocaste de botón o te surgió algo? Escríbenos y lo corregimos.';
+            .'Si te surge algo, escríbenos y te ayudamos a reprogramarla.';
     }
 
-    /**
-     * La paciente se retracta justo después de confirmar: tocó el botón sin
-     * querer, o le surgió algo. Devuelve la cita a la que hay que quitarle la
-     * confirmación, o null.
-     *
-     * Solo cuenta como retracto si lo ÚLTIMO que le mandamos fue el «quedó
-     * confirmada»: un «no puedo» suelto semanas después es otra conversación,
-     * y la reagenda o cancelación ya la maneja Lore.
-     */
-    public static function citaQueSeRetracta(Conversation $conversacion, string $texto): ?Appointment
+    private static function loUltimoNuestroDice(Conversation $conversacion, string $frase): bool
     {
-        $t = mb_strtolower(trim($texto));
-        if (! preg_match('/\b(me equivoqu\w*|error|sin querer|no (puedo|podr[eé]|voy|ir[eé]|asist\w*|alcanzo)|no me queda|reprogram\w*|reagend\w*|cambiar\w*|cancel\w*)\b/u', $t)) {
-            return null;
-        }
-
-        $ultimoNuestro = $conversacion->messages()
+        $ultimo = $conversacion->messages()
             ->where('role', 'assistant')
             ->latest('id')
             ->first(['content', 'created_at']);
 
-        if (! $ultimoNuestro
-            || ! str_contains((string) $ultimoNuestro->content, 'Tu asistencia quedó confirmada')
-            || $ultimoNuestro->created_at->lt(now()->subHours(self::HORAS_VALIDEZ_TEXTO))) {
-            return null;
-        }
-
-        return Appointment::query()
-            ->where('lead_id', $conversacion->lead_id)
-            ->whereNotNull('asistencia_confirmada_at')
-            ->where('starts_at', '>=', now()->subHour())
-            ->orderBy('starts_at')
-            ->first();
+        return $ultimo
+            && str_contains((string) $ultimo->content, $frase)
+            && $ultimo->created_at->gte(now()->subHours(self::HORAS_VALIDEZ_TEXTO));
     }
 
-    public static function quitarConfirmacion(Appointment $cita): void
+    private static function reflejarEnGoogle(Appointment $cita): void
     {
-        $cita->forceFill(['asistencia_confirmada_at' => null])->save();
-
         if (! filled($cita->google_event_id) || ! Settings::hasGoogleCalendar()) {
             return;
         }
@@ -202,17 +151,10 @@ class ConfirmacionDeAsistencia
         try {
             GoogleCalendarService::fromConfig()->updateEvent($cita);
         } catch (Throwable $e) {
-            Log::warning('Se quitó la confirmación, pero no se pudo actualizar Google Calendar.', [
+            Log::warning('No se pudo reflejar la confirmación de asistencia en Google Calendar.', [
                 'appointment_id' => $cita->id,
                 'error' => $e->getMessage(),
             ]);
         }
-    }
-
-    private static function ultimos10(?string $telefono): string
-    {
-        $digitos = preg_replace('/\D/', '', (string) $telefono);
-
-        return strlen($digitos) >= 10 ? substr($digitos, -10) : '';
     }
 }

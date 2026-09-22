@@ -215,12 +215,7 @@ class WhatsAppService
      *
      * @param  list<string>  $params  valores para los {{1}}, {{2}}… del cuerpo
      */
-    /**
-     * @param  list<string>  $payloads  Uno por botón de respuesta rápida, en el
-     *                                  orden de la plantilla. Es lo que vuelve
-     *                                  en el webhook cuando la paciente lo toca.
-     */
-    public function sendTemplate(string $to, string $template, string $language = 'es', array $params = [], array $payloads = []): bool
+    public function sendTemplate(string $to, string $template, string $language = 'es', array $params = []): bool
     {
         $components = [];
         if ($params !== []) {
@@ -231,15 +226,6 @@ class WhatsAppService
                     fn ($p) => ['type' => 'text', 'text' => Str::limit(preg_replace('/\s+/', ' ', (string) $p), 1000, '…')],
                     array_values($params),
                 ),
-            ];
-        }
-
-        foreach (array_values($payloads) as $i => $payload) {
-            $components[] = [
-                'type' => 'button',
-                'sub_type' => 'quick_reply',
-                'index' => (string) $i,
-                'parameters' => [['type' => 'payload', 'payload' => $payload]],
             ];
         }
 

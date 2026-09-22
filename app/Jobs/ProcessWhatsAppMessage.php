@@ -67,7 +67,6 @@ class ProcessWhatsAppMessage implements ShouldQueue
         public readonly ?array $media = null,
         public readonly ?string $phoneNumberId = null,
         public readonly ?string $wamid = null,
-        public readonly ?string $botonPayload = null,
     ) {}
 
     public function handle(): void
@@ -193,17 +192,14 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // ¿Está confirmando su cita? Se registra ANTES de los interruptores:
             // con Lore en pausa la paciente igual confirmó, y la doctora lo
             // tiene que ver en la agenda.
-            $citaConfirmada = ConfirmacionDeAsistencia::citaDelBoton($this->botonPayload, $this->from);
-            if (! $citaConfirmada
-                && ! ConfirmacionDeAsistencia::esBotonReprogramar($this->botonPayload)
-                && ConfirmacionDeAsistencia::esConfirmacionEscrita($this->text)) {
-                $citaConfirmada = ConfirmacionDeAsistencia::citaDelTexto($conversation);
-            }
+            $citaConfirmada = ConfirmacionDeAsistencia::esConfirmacionEscrita($this->text)
+                ? ConfirmacionDeAsistencia::citaDelTexto($conversation)
+                : null;
             if ($citaConfirmada) {
                 ConfirmacionDeAsistencia::confirmar($citaConfirmada);
             } elseif ($retractada = ConfirmacionDeAsistencia::citaQueSeRetracta($conversation, $this->text)) {
-                // Tocó «Confirmo» sin querer o le surgió algo: la agenda deja
-                // de decir que viene, y Lore sigue para reagendar.
+                // Confirmó y enseguida se retracta («me equivoqué», «no puedo»):
+                // la agenda deja de decir que viene, y Lore sigue para reagendar.
                 ConfirmacionDeAsistencia::quitarConfirmacion($retractada);
             }
 
@@ -260,11 +256,11 @@ class ProcessWhatsAppMessage implements ShouldQueue
                 return;
             }
 
-            // Confirmación sola (el botón, o un «confirmo» sin preguntas): la
-            // respuesta es fija y no hace falta Lore. Si trae una pregunta
-            // («confirmo, ¿dónde parqueo?») sigue a Lore, que la contesta; la
-            // cita ya quedó confirmada arriba.
-            if ($citaConfirmada && ($this->botonPayload !== null || ! str_contains($this->text, '?'))) {
+            // Confirmación sola («confirmo», «sí asistiré»): la respuesta es
+            // fija y no hace falta Lore. Si trae una pregunta («confirmo,
+            // ¿dónde parqueo?») sigue a Lore, que la contesta; la cita ya
+            // quedó confirmada arriba.
+            if ($citaConfirmada && ! str_contains($this->text, '?')) {
                 $respuesta = ConfirmacionDeAsistencia::respuesta($citaConfirmada);
                 $whatsapp->sendText($this->from, $respuesta);
                 $conversation->messages()->create([

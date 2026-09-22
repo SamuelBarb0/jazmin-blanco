@@ -21,7 +21,7 @@ use Tests\TestCase;
  *
  * Esa semana las 32 citas próximas seguían sin confirmar aunque varias
  * pacientes habían escrito «Confirmo» o «Si asistiré gracias»: nada lo
- * registraba.
+ * registraba. Se confirma ESCRIBIENDO (sin botones), por decisión suya.
  */
 class ConfirmarAsistenciaTest extends TestCase
 {
@@ -52,7 +52,13 @@ class ConfirmarAsistenciaTest extends TestCase
         Settings::put('whatsapp_bot_enabled', '1');
         Settings::put('whatsapp_test_numbers', '');
 
-        $this->fakeHttp();
+        Http::fake([
+            'graph.facebook.com/*' => Http::response(['messages' => [['id' => 'wamid.out']]], 200),
+            'api.anthropic.com/*' => Http::response([
+                'content' => [['type' => 'text', 'text' => 'Con gusto te ayudo 😊']],
+                'stop_reason' => 'end_turn',
+            ], 200),
+        ]);
 
         $this->doctora = User::factory()->create();
         $this->lead = Lead::create(['user_id' => $this->doctora->id, 'name' => 'Martha Lucía Pérez', 'phone' => self::TELEFONO]);
@@ -70,19 +76,7 @@ class ConfirmarAsistenciaTest extends TestCase
         ]);
     }
 
-    private function fakeHttp(): void
-    {
-        Http::fake([
-            'graph.facebook.com/*' => Http::response(['messages' => [['id' => 'wamid.out']]], 200),
-            'api.anthropic.com/*' => Http::response([
-                'content' => [['type' => 'text', 'text' => 'Con gusto te ayudo 😊']],
-                'stop_reason' => 'end_turn',
-            ], 200),
-        ]);
-    }
-
-    /** @param  array<string,mixed>  $mensaje */
-    private function llega(array $mensaje, string $from = self::TELEFONO): void
+    private function escribe(string $texto): void
     {
         $this->postJson('/api/webhooks/whatsapp', [
             'entry' => [[
@@ -90,28 +84,23 @@ class ConfirmarAsistenciaTest extends TestCase
                     'value' => [
                         'metadata' => ['phone_number_id' => self::LINEA],
                         'contacts' => [['profile' => ['name' => 'Martha']]],
-                        'messages' => [array_merge(['id' => 'wamid.'.uniqid(), 'from' => $from], $mensaje)],
+                        'messages' => [[
+                            'id' => 'wamid.'.uniqid(),
+                            'from' => self::TELEFONO,
+                            'type' => 'text',
+                            'text' => ['body' => $texto],
+                        ]],
                     ],
                 ]],
             ]],
         ])->assertOk();
     }
 
-    private function escribe(string $texto): void
-    {
-        $this->llega(['type' => 'text', 'text' => ['body' => $texto]]);
-    }
-
-    private function tocaBoton(string $payload, string $texto = 'Confirmo mi asistencia', string $from = self::TELEFONO): void
-    {
-        $this->llega(['type' => 'button', 'button' => ['payload' => $payload, 'text' => $texto]], $from);
-    }
-
     private function yaSeLeRecordo(): void
     {
         $this->chat->messages()->create([
             'role' => 'assistant',
-            'content' => 'Hola Martha 👋 Te recordamos tu cita mañana (miércoles 23 de septiembre a las 10:00 am) en el consultorio. Si necesitas reprogramarla, respóndenos por este chat.',
+            'content' => 'Hola Martha 👋 Te recordamos tu cita mañana (miércoles 23 de septiembre a las 10:00 am) en el consultorio. Por favor respóndenos CONFIRMO para confirmar tu asistencia. Si no puedes asistir, cuéntanos y te ayudamos a reprogramarla.',
         ]);
     }
 
@@ -125,39 +114,28 @@ class ConfirmarAsistenciaTest extends TestCase
         return $this->chat->messages()->where('role', 'assistant')->latest('id')->value('content');
     }
 
-    public function test_el_boton_confirma_la_cita_y_contesta_sin_pasar_por_lore(): void
-    {
-        $this->tocaBoton('CONFIRMAR_CITA:'.$this->cita->id);
-
-        $this->assertNotNull($this->cita->fresh()->asistencia_confirmada_at);
-        $this->assertStringContainsString('Tu asistencia quedó confirmada', $this->loQueSeLeContesto());
-        $this->assertStringContainsString('¡Gracias, Martha!', $this->loQueSeLeContesto());
-        $this->assertFalse($this->seLlamoALore());
-    }
-
-    public function test_el_boton_de_otra_persona_no_confirma_nada(): void
-    {
-        $this->tocaBoton('CONFIRMAR_CITA:'.$this->cita->id, 'Confirmo mi asistencia', '573009998877');
-
-        $this->assertNull($this->cita->fresh()->asistencia_confirmada_at);
-    }
-
-    public function test_el_boton_de_reprogramar_va_a_lore_y_no_confirma(): void
-    {
-        $this->tocaBoton('REPROGRAMAR_CITA:'.$this->cita->id, 'Necesito reprogramar');
-
-        $this->assertNull($this->cita->fresh()->asistencia_confirmada_at);
-        $this->assertTrue($this->seLlamoALore());
-    }
-
-    public function test_un_confirmo_escrito_tras_el_recordatorio_confirma(): void
+    public function test_un_confirmo_tras_el_recordatorio_confirma_y_contesta_sin_lore(): void
     {
         $this->yaSeLeRecordo();
 
         $this->escribe('Hola buenas tardes Confirmo Gracias');
 
         $this->assertNotNull($this->cita->fresh()->asistencia_confirmada_at);
+        $this->assertStringContainsString('¡Gracias, Martha! ✅ Tu asistencia quedó confirmada', $this->loQueSeLeContesto());
         $this->assertFalse($this->seLlamoALore());
+    }
+
+    public function test_tambien_vale_tras_el_recordatorio_viejo(): void
+    {
+        // El que sigue saliendo hasta que Meta apruebe el nuevo.
+        $this->chat->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Hola Martha 👋 Te recordamos tu cita mañana (miércoles 23 de septiembre a las 10:00 am) en el consultorio. Si necesitas reprogramarla, respóndenos por este chat.',
+        ]);
+
+        $this->escribe('Si asistiré gracias');
+
+        $this->assertNotNull($this->cita->fresh()->asistencia_confirmada_at);
     }
 
     public function test_un_confirmo_sin_recordatorio_previo_no_confirma(): void
@@ -189,19 +167,20 @@ class ConfirmarAsistenciaTest extends TestCase
 
     public function test_con_lore_en_pausa_se_confirma_igual_pero_no_se_contesta(): void
     {
+        $this->yaSeLeRecordo();
         $this->chat->forceFill(['bot_enabled' => false, 'bot_paused_manually' => true])->save();
 
-        $this->tocaBoton('CONFIRMAR_CITA:'.$this->cita->id);
+        $this->escribe('Confirmo');
 
         $this->assertNotNull($this->cita->fresh()->asistencia_confirmada_at);
-        $this->assertSame(0, $this->chat->messages()->where('role', 'assistant')->count());
+        $this->assertStringContainsString('Te recordamos tu cita', $this->loQueSeLeContesto(), 'no debió contestar nada');
     }
 
-    public function test_si_se_equivoco_de_boton_la_confirmacion_se_quita_y_lore_sigue(): void
+    public function test_si_se_retracta_enseguida_la_confirmacion_se_quita_y_lore_sigue(): void
     {
-        $this->tocaBoton('CONFIRMAR_CITA:'.$this->cita->id);
+        $this->yaSeLeRecordo();
+        $this->escribe('Confirmo');
         $this->assertNotNull($this->cita->fresh()->asistencia_confirmada_at);
-        $this->assertStringContainsString('¿Te equivocaste de botón', $this->loQueSeLeContesto());
 
         $this->escribe('Uy perdón, me equivoqué, esa hora no me queda');
 
@@ -211,7 +190,8 @@ class ConfirmarAsistenciaTest extends TestCase
 
     public function test_un_gracias_despues_de_confirmar_no_quita_nada(): void
     {
-        $this->tocaBoton('CONFIRMAR_CITA:'.$this->cita->id);
+        $this->yaSeLeRecordo();
+        $this->escribe('Confirmo');
 
         $this->escribe('Perfecto, gracias!');
 
@@ -240,7 +220,7 @@ class ConfirmarAsistenciaTest extends TestCase
     public function test_reconoce_las_respuestas_reales(): void
     {
         foreach (['Hola buenas tardes Confirmo Gracias', 'Confirmo', 'Ok confirmo', 'Si asistiré gracias',
-            'Confirmo la cita para mañana 8:00 am', 'sí, asistiré'] as $texto) {
+            'Confirmo la cita para mañana 8:00 am', 'sí, asistiré', 'CONFIRMO'] as $texto) {
             $this->assertTrue(ConfirmacionDeAsistencia::esConfirmacionEscrita($texto), $texto);
         }
 
@@ -250,36 +230,29 @@ class ConfirmarAsistenciaTest extends TestCase
         }
     }
 
-    public function test_el_recordatorio_con_la_plantilla_nueva_lleva_los_botones_con_la_cita(): void
+    public function test_el_recordatorio_nuevo_pide_confirmar_y_no_lleva_botones(): void
     {
-        Settings::put('reminder_template', 'confirmar_cita');
+        Settings::put('reminder_template', 'recordatorio_confirmar');
 
         Artisan::call('appointments:send-reminders', ['--force' => true]);
 
         $envio = Http::recorded(fn (Request $r) => str_contains($r->url(), 'graph.facebook.com'))->first()[0]->data();
 
-        $this->assertSame('confirmar_cita', $envio['template']['name']);
-        $botones = collect($envio['template']['components'])->where('type', 'button')->values();
-        $this->assertCount(2, $botones);
-        $this->assertSame('CONFIRMAR_CITA:'.$this->cita->id, $botones[0]['parameters'][0]['payload']);
-        $this->assertSame('REPROGRAMAR_CITA:'.$this->cita->id, $botones[1]['parameters'][0]['payload']);
-
-        // El historial guarda el texto que de verdad le llegó.
-        $this->assertStringContainsString('Por favor confirma tu asistencia', $this->loQueSeLeContesto());
+        $this->assertSame('recordatorio_confirmar', $envio['template']['name']);
+        $this->assertSame(['body'], collect($envio['template']['components'])->pluck('type')->all());
+        $this->assertStringContainsString('respóndenos CONFIRMO', $this->loQueSeLeContesto());
     }
 
-    public function test_la_plantilla_vieja_no_lleva_botones(): void
+    public function test_con_la_plantilla_vieja_el_historial_guarda_el_texto_viejo(): void
     {
         Settings::put('reminder_template', 'recordatorio_cita');
 
         Artisan::call('appointments:send-reminders', ['--force' => true]);
 
-        $envio = Http::recorded(fn (Request $r) => str_contains($r->url(), 'graph.facebook.com'))->first()[0]->data();
-
-        $this->assertSame([], collect($envio['template']['components'])->where('type', 'button')->all());
+        $this->assertStringContainsString('Si necesitas reprogramarla', $this->loQueSeLeContesto());
     }
 
-    public function test_sin_plantilla_el_texto_pide_confirmar(): void
+    public function test_sin_plantilla_el_texto_libre_pide_confirmar(): void
     {
         Settings::put('reminder_template', '');
 
