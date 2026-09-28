@@ -21,6 +21,12 @@ use Throwable;
  */
 class TranscripcionService
 {
+    /**
+     * Pista para Whisper: una frase corta y natural, como las de las pacientes,
+     * con los términos que confundía. Corta a propósito: ver transcribir().
+     */
+    public const PISTA = 'Hola doc, queria preguntar por el Endolift, el dermapen y la toxina.';
+
     public function __construct(
         private readonly ?string $key,
         private readonly string $baseUrl,
@@ -47,10 +53,12 @@ class TranscripcionService
      * Texto de la nota de voz, o null si no se pudo (sin llave, error del
      * proveedor, audio vacío).
      *
-     * Sin `prompt` a propósito: probado con notas reales, darle a Whisper el
-     * vocabulario del consultorio no corrigió los nombres (Endolift salió
-     * «Endolib») y le hizo inventar una frase que la paciente no dijo. Los
-     * nombres mal escritos los cubre Lore confirmando con la paciente.
+     * Modelo y pista salen de comparar 4 variantes sobre las mismas 10 notas
+     * reales (28-sep-2026): `whisper-large-v3` con la PISTA corta de abajo fue
+     * la única que acertó Endolift, «mi doc», «me aclararon» e «implante de
+     * cejas» sin inventar nada, y la más rápida (518 ms). Una pista LARGA (la
+     * lista de servicios del panel) se probó antes y le hizo inventar frases;
+     * el turbo con esta misma pista escribió «mi Dodo» y agregó «Fui de mes.».
      */
     public function transcribir(string $audio, string $filename): ?string
     {
@@ -70,6 +78,7 @@ class TranscripcionService
                     'language' => 'es',
                     'response_format' => 'json',
                     'temperature' => '0',
+                    'prompt' => self::PISTA,
                 ]);
         } catch (Throwable $e) {
             Log::error('No se pudo transcribir una nota de voz.', ['error' => $e->getMessage()]);

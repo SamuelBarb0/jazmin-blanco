@@ -6,8 +6,10 @@ use App\Jobs\ProcessWhatsAppMessage;
 use App\Models\Message;
 use App\Models\User;
 use App\Support\Settings;
+use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -44,7 +46,7 @@ class NotasDeVozTranscritasTest extends TestCase
         Settings::put('whatsapp_bot_enabled', '0');
     }
 
-    /** @param  \Illuminate\Http\Client\Response|\GuzzleHttp\Promise\PromiseInterface  $groq */
+    /** @param  Response|PromiseInterface  $groq */
     private function fakeMetaYGroq($groq): void
     {
         Http::fake([
@@ -85,6 +87,7 @@ class NotasDeVozTranscritasTest extends TestCase
             && $r->hasHeader('Authorization', 'Bearer gsk_prueba')
             && str_contains($r->body(), 'whisper-large-v3-turbo')
             && str_contains($r->body(), 'name="language"')
+            && str_contains($r->body(), 'Endolift')
             && str_contains($r->body(), 'OggS-fake'));
     }
 
