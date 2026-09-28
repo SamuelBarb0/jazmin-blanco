@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\WebhookHit;
 use App\Services\BotService;
 use App\Services\MetaAdsService;
+use App\Services\TranscripcionService;
 use App\Services\WhatsAppService;
 use App\Support\ConfirmacionDeAsistencia;
 use App\Support\PatientLeads;
@@ -179,10 +180,11 @@ class ProcessWhatsAppMessage implements ShouldQueue
             // El archivo se guarda ANTES de cualquier interruptor: que el bot
             // esté en pausa no debe costarle a la doctora la foto que le mandó
             // la paciente.
+            $adjuntos = $this->guardarAdjunto($whatsapp, $conversation);
             $conversation->messages()->create([
                 'role' => 'user',
-                'content' => $this->text,
-                'media' => $this->guardarAdjunto($whatsapp, $conversation) ?: null,
+                'content' => $this->textoParaLore($adjuntos),
+                'media' => $adjuntos ?: null,
             ]);
 
             // Desde aquí el mensaje ya está en la bandeja: pase lo que pase
@@ -365,12 +367,43 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
         Storage::disk('public')->put($ruta, $archivo['contents']);
 
-        return [[
+        $adjunto = [
             'type' => (string) $this->media['kind'],
             'url' => Storage::disk('public')->url($ruta),
             'caption' => (string) ($this->media['caption'] ?? ''),
             'filename' => (string) ($this->media['filename'] ?? ''),
-        ]];
+        ];
+
+        // La nota de voz se transcribe aquí, con los bytes en la mano, y se
+        // guarda junto al audio: la doctora la lee en la bandeja aunque Lore
+        // esté en pausa.
+        if ($adjunto['type'] === 'audio') {
+            $texto = TranscripcionService::fromConfig()->transcribir($archivo['contents'], basename($ruta));
+            if ($texto !== null) {
+                $adjunto['transcript'] = $texto;
+            }
+        }
+
+        return [$adjunto];
+    }
+
+    /**
+     * Lo que Lore lee del mensaje. Una nota de voz transcrita llega como texto
+     * (marcada, porque Whisper puede equivocarse en nombres o cifras); sin
+     * transcripción se queda la nota del webhook que le pide escribirlo.
+     *
+     * @param  array<int, array<string,string>>  $adjuntos
+     */
+    private function textoParaLore(array $adjuntos): string
+    {
+        $transcripcion = collect($adjuntos)->firstWhere('type', 'audio')['transcript'] ?? null;
+
+        if ($transcripcion === null) {
+            return $this->text;
+        }
+
+        return '[Nota de voz de la paciente, transcrita automáticamente. Si un nombre, fecha o cifra suena raro, confírmalo con ella.] '
+            .$transcripcion;
     }
 
     /**

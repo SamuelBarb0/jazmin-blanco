@@ -30,6 +30,13 @@ class WhatsAppService
 
     public const LIMITE_VIDEO = 16 * 1024 * 1024;
 
+    /**
+     * WhatsApp admite documentos mucho más grandes que imágenes o videos, y por
+     * eso este límite va aparte: aplicarle el de imagen a un PDF rechazaría
+     * historias clínicas de 6 MB que la plataforma acepta sin problema.
+     */
+    public const LIMITE_DOCUMENTO = 100 * 1024 * 1024;
+
     public function __construct(
         private readonly ?string $token,
         private readonly ?string $phoneId,
@@ -106,9 +113,16 @@ class WhatsAppService
      *
      * @param  string  $type  'image' o 'video'
      */
-    public function sendMedia(string $to, string $type, string $url, string $caption = ''): bool
+    /**
+     * @param  string  $filename  Solo para documentos: el nombre con el que llega
+     *                            al teléfono. Sin él, WhatsApp muestra el nombre
+     *                            aleatorio con el que se guardó en disco, y la
+     *                            paciente recibe un «a1b2c3.pdf» en vez de
+     *                            «Plan nutricional.pdf».
+     */
+    public function sendMedia(string $to, string $type, string $url, string $caption = '', string $filename = ''): bool
     {
-        $type = $type === 'video' ? 'video' : 'image';
+        $type = in_array($type, ['video', 'document'], true) ? $type : 'image';
 
         if (! $this->cabeEnWhatsApp($to, $type, $url)) {
             return false;
@@ -117,6 +131,10 @@ class WhatsAppService
         $media = ['link' => $url];
         if (trim($caption) !== '') {
             $media['caption'] = Str::limit(trim($caption), 1020, '…');
+        }
+
+        if ($type === 'document' && trim($filename) !== '') {
+            $media['filename'] = Str::limit(trim($filename), 240, '');
         }
 
         return $this->post([
@@ -131,7 +149,11 @@ class WhatsAppService
     /** Bytes que admite WhatsApp para un 'image' o un 'video'. */
     public static function limiteBytes(string $type): int
     {
-        return $type === 'video' ? self::LIMITE_VIDEO : self::LIMITE_IMAGEN;
+        return match ($type) {
+            'video' => self::LIMITE_VIDEO,
+            'document' => self::LIMITE_DOCUMENTO,
+            default => self::LIMITE_IMAGEN,
+        };
     }
 
     /** El mismo tope en MB, para los mensajes que lee la doctora. */
@@ -176,7 +198,7 @@ class WhatsAppService
             'title' => 'Media upload error',
             'details' => sprintf(
                 'Comprobado antes de enviar: el %s pesa %d bytes y el tope de WhatsApp es %d. Archivo: %s',
-                $type === 'video' ? 'video' : 'la imagen',
+                match ($type) { 'video' => 'video', 'document' => 'documento', default => 'la imagen' },
                 $bytes,
                 $limite,
                 $url,

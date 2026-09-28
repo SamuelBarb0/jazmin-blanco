@@ -22,6 +22,7 @@ const modelLabels: Record<string, string> = {
 interface BotConfig {
     bot_name: string;
     clinic_name: string;
+    doctor_name: string;
     clinic_address: string;
     clinic_hours: string;
     clinic_payment: string;
@@ -275,6 +276,20 @@ export default function IaSettings({ configured, keyPreview, fromEnv, model, mod
                             <div className="grid gap-2">
                                 <Label htmlFor="clinic_name">Nombre de la clínica</Label>
                                 <Input id="clinic_name" value={botForm.data.clinic_name} onChange={(e) => botForm.setData('clinic_name', e.target.value)} />
+                            </div>
+
+                            <div className="grid gap-2">
+                                <Label htmlFor="doctor_name">Profesional a la que representa</Label>
+                                <Input
+                                    id="doctor_name"
+                                    value={botForm.data.doctor_name}
+                                    onChange={(e) => botForm.setData('doctor_name', e.target.value)}
+                                    placeholder="Dra. Jasmin Blanco"
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Con este nombre se presenta siempre: «Lore, la asistente de la Dra. Jasmin Blanco», incluso cuando la
+                                    paciente pregunta si habla con una persona.
+                                </p>
                             </div>
                             <div className="grid gap-2">
                                 <Label htmlFor="clinic_address">Dirección</Label>

@@ -27,6 +27,8 @@ interface ChatMedia {
     url: string | null;
     caption?: string;
     filename?: string;
+    /** Texto de la nota de voz (Whisper), si se pudo transcribir. */
+    transcript?: string;
 }
 
 interface Msg {
@@ -476,14 +478,18 @@ export default function Inbox({
                                             className={cn('flex', mio ? 'justify-end' : 'justify-start')}
                                         >
                                             <div className={cn('max-w-[75%] space-y-2', mio && 'items-end')}>
-                                                <div
-                                                    className={cn(
-                                                        'rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap',
-                                                        mio ? 'bg-primary text-primary-foreground rounded-br-md' : 'liquid-glass rounded-bl-md',
-                                                    )}
-                                                >
-                                                    {m.content}
-                                                </div>
+                                                {/* Una nota de voz transcrita ya muestra su texto bajo el audio;
+                                                    el contenido es esa misma transcripción con la marca para Lore. */}
+                                                {!m.media?.some((media) => media.type === 'audio' && media.transcript) && (
+                                                    <div
+                                                        className={cn(
+                                                            'rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap',
+                                                            mio ? 'bg-primary text-primary-foreground rounded-br-md' : 'liquid-glass rounded-bl-md',
+                                                        )}
+                                                    >
+                                                        {m.content}
+                                                    </div>
+                                                )}
 
                                                 {m.media?.map((media, i) =>
                                                     media.url ? (
@@ -492,7 +498,14 @@ export default function Inbox({
                                                                 <video src={media.url} controls className="max-h-64 w-full" />
                                                             ) : media.type === 'audio' ? (
                                                                 // Las notas de voz llegan en ogg/opus: el navegador las reproduce.
-                                                                <audio src={media.url} controls className="w-full" />
+                                                                <div className="space-y-1.5">
+                                                                    <audio src={media.url} controls className="w-full" />
+                                                                    {media.transcript && (
+                                                                        <p className="text-muted-foreground px-1 text-xs italic">
+                                                                            «{media.transcript}»
+                                                                        </p>
+                                                                    )}
+                                                                </div>
                                                             ) : media.type === 'document' ? (
                                                                 <a
                                                                     href={media.url}
@@ -573,7 +586,12 @@ export default function Inbox({
                                     <input
                                         ref={archivoRef}
                                         type="file"
-                                        accept="image/jpeg,image/png,image/webp,video/mp4,video/3gpp"
+                                        accept={
+                                            'image/jpeg,image/png,image/webp,video/mp4,video/3gpp,' +
+                                            // PDF y Word: historia clínica, plan nutricional, indicaciones.
+                                            'application/pdf,.pdf,application/msword,.doc,' +
+                                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx'
+                                        }
                                         className="hidden"
                                         onChange={(e) => setData('archivo', e.target.files?.[0] ?? null)}
                                     />
@@ -583,7 +601,7 @@ export default function Inbox({
                                         variant="outline"
                                         disabled={!puedeEscribir || processing}
                                         onClick={() => archivoRef.current?.click()}
-                                        title="Adjuntar imagen o video"
+                                        title="Adjuntar imagen, video, PDF o Word"
                                     >
                                         <Paperclip className="size-4" />
                                     </Button>

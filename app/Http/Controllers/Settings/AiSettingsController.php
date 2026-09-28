@@ -72,6 +72,7 @@ class AiSettingsController extends Controller
         $data = $request->validate([
             'bot_name' => ['nullable', 'string', 'max:60'],
             'clinic_name' => ['nullable', 'string', 'max:255'],
+            'doctor_name' => ['nullable', 'string', 'max:120'],
             'clinic_address' => ['nullable', 'string', 'max:500'],
             'clinic_hours' => ['nullable', 'string', 'max:500'],
             'clinic_payment' => ['nullable', 'string', 'max:1000'],

@@ -41,6 +41,15 @@ return [
         'base_url' => env('ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1'),
     ],
 
+    // Notas de voz → texto (Whisper). Formato de OpenAI: Groq por defecto, que
+    // tiene plan gratuito; para OpenAI basta cambiar base_url, modelo y llave.
+    'transcripcion' => [
+        'key' => env('TRANSCRIPTION_API_KEY'),
+        'base_url' => env('TRANSCRIPTION_BASE_URL', 'https://api.groq.com/openai/v1'),
+        'model' => env('TRANSCRIPTION_MODEL', 'whisper-large-v3-turbo'),
+        'timeout' => env('TRANSCRIPTION_TIMEOUT', 30),
+    ],
+
     'whatsapp' => [
         'token' => env('WHATSAPP_ACCESS_TOKEN'),
         'phone_id' => env('WHATSAPP_PHONE_ID'),

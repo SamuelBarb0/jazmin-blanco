@@ -9,6 +9,7 @@ use App\Services\WhatsAppService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
@@ -295,6 +296,25 @@ class InboxController extends Controller
     }
 
     /** Envía un mensaje escrito por la doctora al número de la paciente. */
+    /**
+     * Qué es el archivo para WhatsApp: cada tipo tiene su propio tope y su
+     * propia forma de viajar. Un PDF mandado como 'image' lo rechaza Meta.
+     */
+    private static function tipoDe(?UploadedFile $archivo): string
+    {
+        if (! $archivo) {
+            return 'image';
+        }
+
+        $mime = (string) $archivo->getMimeType();
+
+        return match (true) {
+            Str::startsWith($mime, 'video/') => 'video',
+            Str::startsWith($mime, 'image/') => 'image',
+            default => 'document',
+        };
+    }
+
     public function send(Request $request, Conversation $conversation): RedirectResponse
     {
         $this->authorizeConversation($request, $conversation);
@@ -304,25 +324,28 @@ class InboxController extends Controller
         // de 8 MB que Meta rechaza después con `131053`, cuando la doctora ya
         // las ve enviadas en la bandeja.
         $subido = $request->file('archivo');
-        $tipo = $subido && Str::startsWith((string) $subido->getMimeType(), 'video/') ? 'video' : 'image';
+        $tipo = self::tipoDe($subido);
 
         $data = $request->validate([
             'content' => ['nullable', 'string', 'max:4000'],
             'archivo' => ['nullable', 'file', 'max:'.intdiv(WhatsAppService::limiteBytes($tipo), 1024),
-                'mimetypes:image/jpeg,image/png,image/webp,video/mp4,video/3gpp'],
+                'mimetypes:image/jpeg,image/png,image/webp,video/mp4,video/3gpp,'
+                .'application/pdf,application/msword,'
+                .'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
         ], [
             'archivo.max' => sprintf(
                 'WhatsApp no acepta %s de más de %d MB. Comprime el archivo antes de enviarlo.',
-                $tipo === 'video' ? 'videos' : 'imágenes',
+                match ($tipo) { 'video' => 'videos', 'document' => 'documentos', default => 'imágenes' },
                 WhatsAppService::limiteMb($tipo),
             ),
+            'archivo.mimetypes' => 'Se pueden enviar imágenes, videos, PDF y Word.',
         ]);
 
         $texto = trim((string) ($data['content'] ?? ''));
         $adjunto = $request->file('archivo');
 
         if ($texto === '' && ! $adjunto) {
-            return $this->deVuelta($conversation)->with('error', 'Escribe un mensaje o adjunta una imagen.');
+            return $this->deVuelta($conversation)->with('error', 'Escribe un mensaje o adjunta un archivo.');
         }
 
         $telefono = $conversation->lead?->phone;
@@ -347,15 +370,21 @@ class InboxController extends Controller
                 $url = url($url);
             }
 
-            $esVideo = Str::startsWith((string) $adjunto->getMimeType(), 'video/');
+            $clase = self::tipoDe($adjunto);
 
-            // El texto viaja como pie de la imagen: así llega un solo mensaje.
-            $enviado = $whatsapp->sendMedia($telefono, $esVideo ? 'video' : 'image', $url, $texto);
+            // El nombre ORIGINAL, no el del disco: al guardar, Laravel le pone
+            // un hash, y sin esto la paciente recibe «a1b2c3.pdf» en vez de
+            // «Plan nutricional.pdf».
+            $nombre = $adjunto->getClientOriginalName();
+
+            // El texto viaja como pie del archivo: así llega un solo mensaje.
+            $enviado = $whatsapp->sendMedia($telefono, $clase, $url, $texto, $nombre);
 
             $media[] = [
-                'type' => $esVideo ? 'video' : 'image',
+                'type' => $clase,
                 'url' => Storage::disk('public')->url($ruta),
                 'caption' => $texto,
+                'filename' => $nombre,
             ];
         } else {
             $enviado = $whatsapp->sendText($telefono, $texto);
@@ -372,7 +401,9 @@ class InboxController extends Controller
             'sent_by' => 'human',
             // Con adjunto y sin texto, se deja constancia de qué se mandó para
             // que el asistente no lea un mensaje vacío al retomar el hilo.
-            'content' => $texto !== '' ? $texto : '[La doctora envió un archivo.]',
+            'content' => $texto !== '' ? $texto : ($adjunto
+                ? '[La doctora envió el archivo «'.$adjunto->getClientOriginalName().'».]'
+                : '[La doctora envió un archivo.]'),
             'media' => $media ?: null,
         ]);
 

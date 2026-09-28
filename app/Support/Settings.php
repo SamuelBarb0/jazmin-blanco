@@ -247,6 +247,12 @@ class Settings
         return [
             'bot_name' => self::get('bot_name') ?: 'Lore',
             'clinic_name' => self::get('clinic_name') ?: 'Consultorio Dra. Jasmin Blanco',
+            // La profesional a la que representa la asistente. Existe como
+            // ajuste propio y no incrustada en el prompt porque la identidad se
+            // decía de tres formas distintas —«del consultorio», «de Consultorio
+            // Dra. Jasmin Blanco», «de la Dra. Jasmin Blanco»— y la paciente lo
+            // notaba justo al preguntar si hablaba con una persona.
+            'doctor_name' => self::get('doctor_name') ?: 'Dra. Jasmin Blanco',
             // Dirección tal como la escribió la doctora en sus propias plantillas
             // de WhatsApp (notificacion_2_dias, notificacion_agendamiento y
             // recordatorio_de_reserva_3_horas_antes coinciden en el 82-46).
@@ -264,7 +270,7 @@ class Settings
      */
     public static function setBotConfig(array $config): void
     {
-        foreach (['bot_name', 'clinic_name', 'clinic_address', 'clinic_hours', 'clinic_payment', 'clinic_payment_link', 'clinic_landing', 'bot_persona'] as $key) {
+        foreach (['bot_name', 'clinic_name', 'doctor_name', 'clinic_address', 'clinic_hours', 'clinic_payment', 'clinic_payment_link', 'clinic_landing', 'bot_persona'] as $key) {
             if (array_key_exists($key, $config)) {
                 self::put($key, $config[$key]);
             }
