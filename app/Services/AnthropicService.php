@@ -10,7 +10,7 @@ class AnthropicService
 {
     public function __construct(
         private readonly ?string $apiKey = null,
-        private readonly string $model = 'claude-opus-4-8',
+        private readonly string $model = 'claude-sonnet-5-5',
         private readonly string $baseUrl = 'https://api.anthropic.com/v1',
     ) {
     }
@@ -41,7 +41,7 @@ class AnthropicService
             'model' => $this->model,
             'max_tokens' => 8,
             'messages' => [['role' => 'user', 'content' => 'ping']],
-        ]);
+        ] + $this->ajustesDelModelo());
 
         if ($response->failed()) {
             $message = $response->json('error.message') ?? 'La API rechazó la clave.';
@@ -55,6 +55,28 @@ class AnthropicService
     public function isConfigured(): bool
     {
         return filled($this->apiKey);
+    }
+
+    /**
+     * Parámetros que el modelo necesita además de los de siempre.
+     *
+     * Sonnet 5.5 piensa por defecto (Opus 4.8, no), y ese razonamiento sale de
+     * los mismos `max_tokens`: con los 1.024 de Lore se comería la respuesta y
+     * además la haría más lenta. `between_tools` lo apaga, que es justo como
+     * venía funcionando. `thinking: disabled` en este modelo es un 400.
+     *
+     * @return array<string,mixed>
+     */
+    private function ajustesDelModelo(): array
+    {
+        if (str_starts_with($this->model, 'claude-sonnet-5-5')) {
+            return [
+                'thinking' => ['type' => 'between_tools'],
+                'output_config' => ['effort' => 'medium'],
+            ];
+        }
+
+        return [];
     }
 
     /**
@@ -112,7 +134,7 @@ class AnthropicService
                     'content' => $this->buildUserPrompt($service),
                 ],
             ],
-        ]);
+        ] + $this->ajustesDelModelo());
 
         if ($response->failed()) {
             $message = $response->json('error.message') ?? $response->body();
@@ -149,7 +171,7 @@ class AnthropicService
             'max_tokens' => $maxTokens,
             'system' => self::cacheable($system),
             'messages' => $messages,
-        ]);
+        ] + $this->ajustesDelModelo());
 
         if ($response->failed()) {
             $message = $response->json('error.message') ?? $response->body();
@@ -180,7 +202,7 @@ class AnthropicService
             'max_tokens' => $maxTokens,
             'system' => self::cacheable($system),
             'messages' => $messages,
-        ];
+        ] + $this->ajustesDelModelo();
 
         if (! empty($tools)) {
             $payload['tools'] = $tools;

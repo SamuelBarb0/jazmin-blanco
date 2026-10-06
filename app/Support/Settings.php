@@ -65,7 +65,7 @@ class Settings
     public static function anthropicModel(): string
     {
         return self::get(self::KEY_MODEL)
-            ?: config('services.anthropic.model', 'claude-opus-4-8');
+            ?: config('services.anthropic.model', 'claude-sonnet-5-5');
     }
 
     public static function setAnthropic(?string $key, ?string $model): void

@@ -14,8 +14,9 @@ import { FormEventHandler, useState } from 'react';
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Integración IA', href: '/settings/ia' }];
 
 const modelLabels: Record<string, string> = {
-    'claude-opus-4-8': 'Claude Opus 4.8 — el más capaz (recomendado)',
-    'claude-sonnet-4-6': 'Claude Sonnet 4.6 — equilibrado y más económico',
+    'claude-sonnet-5-5': 'Claude Sonnet 5.5 — mejor relación calidad/precio (recomendado)',
+    'claude-opus-4-8': 'Claude Opus 4.8 — más capaz, cuesta 2,5 veces más',
+    'claude-sonnet-4-6': 'Claude Sonnet 4.6 — generación anterior',
     'claude-haiku-4-5': 'Claude Haiku 4.5 — el más rápido y barato',
 };
 
