@@ -431,6 +431,53 @@ class Settings
     }
 
     /**
+     * Líneas (por `phone_number_id`) que NO mandan plantillas.
+     *
+     * Las plantillas son lo único que le escribe a una paciente que no nos ha
+     * hablado en 24 h: recordatorios, aviso de cita, reactivación. Con dos
+     * números, puede tocar callar uno sin callar el otro — el 7-oct-2026 el 316
+     * quedó de línea nueva mientras se recuperaba el 317, y no se quería que el
+     * 316 le escribiera primero a nadie. Las respuestas dentro de las 24 h NO
+     * se frenan: eso es texto libre, no plantilla.
+     *
+     * @return list<string>
+     */
+    public static function lineasSinPlantillas(): array
+    {
+        return array_values(array_filter(array_map(
+            'trim',
+            preg_split('/[,;\s]+/', (string) self::get('whatsapp_lineas_sin_plantillas')) ?: [],
+        )));
+    }
+
+    /**
+     * La línea con la que hoy se le escribe a quien entró por `$phoneId`.
+     *
+     * Cuando un número vuelve a registrarse en otra WABA (el 317 tras borrarse
+     * el portfolio viejo en oct-2026), Meta le da un `phone_number_id` NUEVO,
+     * pero las conversaciones guardadas conservan el viejo y todo lo que se le
+     * mande a esas pacientes saldría por un id muerto. El ajuste
+     * `whatsapp_lineas_reemplazadas` = `viejo=nuevo` (varios separados por
+     * coma) las redirige sin tocar ni una fila.
+     */
+    public static function lineaVigente(?string $phoneId): ?string
+    {
+        if (blank($phoneId)) {
+            return $phoneId;
+        }
+
+        foreach (preg_split('/[,;\s]+/', (string) self::get('whatsapp_lineas_reemplazadas')) ?: [] as $par) {
+            [$viejo, $nuevo] = array_pad(array_map('trim', explode('=', $par, 2)), 2, '');
+
+            if ($viejo === $phoneId && $nuevo !== '') {
+                return $nuevo;
+            }
+        }
+
+        return $phoneId;
+    }
+
+    /**
      * ¿Está este número en la lista? Compara por los últimos 10 dígitos, así da
      * igual que se haya escrito con indicativo o sin él: Meta entrega el `from`
      * como `573123652269` y uno tiende a escribir `312 365 2269`.

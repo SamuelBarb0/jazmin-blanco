@@ -319,10 +319,22 @@ class AppointmentController extends Controller
             ? Conversation::where('lead_id', $appointment->lead->id)->where('channel', 'whatsapp')->latest('id')->first()
             : null;
 
+        // Por la línea en la que ella escribió: la ventana de 24 h de arriba es
+        // de ESA línea. Se reasigna (y no se usa una variable aparte) porque
+        // `lastMessageId()` se lee más abajo de esta misma instancia.
+        $whatsapp = $whatsapp->forPhone(
+            $conversacion?->phone_number_id
+                ?? Conversation::lineaDeLaPaciente($appointment->user_id, $appointment->lead_id, $telefono)
+        );
+
         try {
             if ($conversacion?->windowIsOpen()) {
                 $enviado = $whatsapp->sendText($telefono, $texto);
                 $via = '';
+            } elseif (! $whatsapp->puedeEnviarPlantillas()) {
+                // Sin esto caería en el «no hay plantilla aprobada», que es falso
+                // y manda a la doctora a revisar Meta por nada.
+                return ' (No se le avisó: no ha escrito en 24 h y esta línea de WhatsApp tiene las plantillas en pausa.)';
             } else {
                 $idioma = Settings::reminderConfig()['language'];
                 $dia = $appointment->starts_at->copy()->shiftTimezone($tz)->locale('es')->isoFormat('dddd D [de] MMMM');

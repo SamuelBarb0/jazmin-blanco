@@ -357,7 +357,9 @@ class InboxController extends Controller
             return $this->deVuelta($conversation)->with('error', 'Pasaron más de 24 horas desde el último mensaje de la paciente. WhatsApp no permite escribirle texto libre hasta que ella vuelva a escribir.');
         }
 
-        $whatsapp = WhatsAppService::fromConfig();
+        // Por la línea en la que ella escribió: la ventana de 24 h que se acaba
+        // de comprobar es de ESA línea, no de la del `.env`.
+        $whatsapp = WhatsAppService::fromConfig()->forPhone($conversation->phone_number_id);
         $media = [];
 
         if ($adjunto) {

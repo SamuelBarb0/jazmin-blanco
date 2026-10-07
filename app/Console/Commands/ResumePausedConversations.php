@@ -174,6 +174,10 @@ class ResumePausedConversations extends Command
                     break 2;
                 }
 
+                // Por la línea en la que ella escribió: con dos números, la del
+                // `.env` puede ser una en la que esta paciente nunca abrió chat.
+                $linea = $whatsapp->forPhone($conversation->phone_number_id);
+
                 try {
                     $result = $bot->reply(
                         $conversation,
@@ -181,14 +185,14 @@ class ResumePausedConversations extends Command
                     );
 
                     if (trim($result['text']) !== '') {
-                        $whatsapp->sendText($telefono, $result['text']);
+                        $linea->sendText($telefono, $result['text']);
                     }
 
                     foreach ($result['media'] as $item) {
                         if (blank($item['url'] ?? null)) {
                             continue;
                         }
-                        $whatsapp->sendMedia(
+                        $linea->sendMedia(
                             $telefono,
                             $item['type'] ?? 'image',
                             $item['url'],

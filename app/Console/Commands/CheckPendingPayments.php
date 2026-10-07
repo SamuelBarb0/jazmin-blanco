@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Conversation;
 use App\Models\PaymentLink;
 use App\Models\User;
 use App\Services\BotService;
@@ -250,7 +251,12 @@ class CheckPendingPayments extends Command
             .'Si necesitas reprogramarla, respóndenos por este chat.';
 
         try {
-            $enviado = WhatsAppService::fromConfig()->sendText($telefono, $texto);
+            // Por la línea del chat donde pidió el link; si el link no quedó
+            // atado a ninguno, por la última en la que ella escribió.
+            $linea = $link->conversation?->phone_number_id
+                ?? Conversation::lineaDeLaPaciente($link->user_id, $link->lead_id, $telefono);
+
+            $enviado = WhatsAppService::fromConfig()->forPhone($linea)->sendText($telefono, $texto);
         } catch (Throwable $e) {
             $enviado = false;
             Log::error('No se pudo avisar del pago confirmado', [

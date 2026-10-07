@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\DeliveryFailure;
+use App\Support\Settings;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -70,11 +71,20 @@ class WhatsAppService
      */
     public function forPhone(?string $phoneId): self
     {
+        // Un número re-registrado cambia de id: ver `Settings::lineaVigente()`.
+        $phoneId = Settings::lineaVigente($phoneId);
+
         if (blank($phoneId) || $phoneId === $this->phoneId) {
             return $this;
         }
 
         return new self($this->token, $phoneId, $this->apiVersion);
+    }
+
+    /** ¿Esta línea puede mandar plantillas? Ver `Settings::lineasSinPlantillas()`. */
+    public function puedeEnviarPlantillas(): bool
+    {
+        return ! in_array((string) $this->phoneId, Settings::lineasSinPlantillas(), true);
     }
 
     /** Línea por la que envía esta instancia. */
@@ -239,6 +249,15 @@ class WhatsAppService
      */
     public function sendTemplate(string $to, string $template, string $language = 'es', array $params = []): bool
     {
+        if (! $this->puedeEnviarPlantillas()) {
+            Log::info('Plantilla no enviada: esta línea tiene las plantillas frenadas.', [
+                'phone_id' => $this->phoneId,
+                'template' => $template,
+            ]);
+
+            return false;
+        }
+
         $components = [];
         if ($params !== []) {
             $components[] = [

@@ -128,4 +128,51 @@ class Conversation extends Model
     {
         return $this->hasMany(Message::class);
     }
+
+    /**
+     * Línea de WhatsApp por la que la paciente nos escribió por última vez.
+     *
+     * Con dos números atendidos por la misma Lore, todo lo que sale por
+     * iniciativa nuestra (aviso de cita, recordatorios, reactivación, aviso de
+     * pago) tiene que salir por el número que ella CONOCE: escribirle desde el
+     * otro la confunde y, dentro de la ventana de 24 h, Meta lo rechaza con
+     * `131047` porque en esa línea nunca abrió conversación.
+     *
+     * Busca primero por lead y, si no lo hay (citas importadas sin lead), por
+     * los últimos 10 dígitos del teléfono. `null` = nunca escribió por ninguna
+     * línea conocida, y `WhatsAppService::forPhone(null)` cae en la del `.env`.
+     *
+     * @param  int  $cuentaId  el `user_id` con el que se guardan las conversaciones (la cuenta, no el login)
+     */
+    public static function lineaDeLaPaciente(int $cuentaId, ?int $leadId, ?string $telefono): ?string
+    {
+        $cola = substr(Settings::normalizePhone((string) $telefono), -10);
+
+        if (blank($leadId) && strlen($cola) < 10) {
+            return null;
+        }
+
+        return self::query()
+            ->where('user_id', $cuentaId)
+            ->where('channel', 'whatsapp')
+            ->whereNotNull('phone_number_id')
+            ->where(function ($q) use ($leadId, $cola) {
+                if (filled($leadId)) {
+                    $q->orWhere('lead_id', $leadId);
+                }
+                if (strlen($cola) === 10) {
+                    $q->orWhereHas('lead', fn ($l) => $l->where('phone', 'like', '%'.$cola));
+                }
+            })
+            ->orderByDesc(
+                Message::query()
+                    ->select('created_at')
+                    ->whereColumn('conversation_id', 'conversations.id')
+                    ->where('role', 'user')
+                    ->latest('id')
+                    ->limit(1)
+            )
+            ->orderByDesc('id')
+            ->value('phone_number_id');
+    }
 }

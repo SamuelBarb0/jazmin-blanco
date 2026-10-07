@@ -150,6 +150,22 @@ class SendAppointmentReminders extends Command
                         continue;
                     }
 
+                    // Por la última línea en la que escribió la paciente; si nunca
+                    // escribió (cita creada a mano), por la del `.env`.
+                    $linea = $whatsapp->forPhone(
+                        Conversation::lineaDeLaPaciente($cita->user_id, $cita->lead_id, $telefono)
+                    );
+
+                    // Línea con las plantillas frenadas: se salta ANTES de reservar.
+                    // Si se reservara, el envío fallaría, la reserva se soltaría y
+                    // cada corrida horaria lo volvería a intentar y a contar como fallo.
+                    if ($config['template'] && ! $linea->puedeEnviarPlantillas()) {
+                        $excluidos++;
+                        $this->line("  <fg=gray>línea sin plantillas</> {$cita->patient_name} · {$telefono} · línea {$linea->phoneId()}");
+
+                        continue;
+                    }
+
                     $texto = $this->mensaje($cita, $ahora, $tz, $config['template']);
 
                     if ($dry) {
@@ -181,8 +197,8 @@ class SendAppointmentReminders extends Command
 
                     try {
                         $ok = $config['template']
-                            ? $whatsapp->sendTemplate($telefono, $config['template'], $config['language'], $this->parametros($cita, $ahora, $tz))
-                            : $whatsapp->sendText($telefono, $texto);
+                            ? $linea->sendTemplate($telefono, $config['template'], $config['language'], $this->parametros($cita, $ahora, $tz))
+                            : $linea->sendText($telefono, $texto);
                     } catch (Throwable $e) {
                         $ok = false;
                         $this->error("  Error con {$cita->patient_name}: ".$e->getMessage());

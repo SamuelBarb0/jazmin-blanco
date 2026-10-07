@@ -159,6 +159,18 @@ class SendReactivationMessages extends Command
                     continue;
                 }
 
+                // Por la línea en la que ella escribió, que es el número que
+                // conoce. Si esa línea tiene las plantillas en pausa, se salta
+                // sin marcarla: la retoma la corrida siguiente a la reanudación.
+                $linea = $whatsapp->forPhone($conversacion->phone_number_id);
+
+                if (! $linea->puedeEnviarPlantillas()) {
+                    $excluidos++;
+                    $this->line("  <fg=gray>línea sin plantillas</> {$telefono} · línea {$linea->phoneId()}");
+
+                    continue;
+                }
+
                 $silencio = (int) round($this->ultimoInbound[$conversacion->id]->diffInHours(now()));
 
                 if ($dry) {
@@ -169,7 +181,8 @@ class SendReactivationMessages extends Command
                 }
 
                 try {
-                    $ok = $whatsapp->sendTemplate($telefono, $config['template'], $config['language']);
+                    // La plantilla tiene que estar aprobada en la WABA de esa línea.
+                    $ok = $linea->sendTemplate($telefono, $config['template'], $config['language']);
                 } catch (Throwable $e) {
                     $ok = false;
                     $this->error("  Error con {$telefono}: ".$e->getMessage());
