@@ -12,6 +12,7 @@ import {
     HandHelping,
     MessageCircle,
     Paperclip,
+    Phone,
     Pause,
     Play,
     Search,
@@ -51,6 +52,8 @@ interface ConversationRow {
     title: string;
     lead: LeadRef | null;
     channel: string;
+    /** Número por el que escribió de último («316 534 1047»), o null si es anterior a guardarlo. */
+    linea: string | null;
     bot_enabled: boolean;
     needs_human: boolean;
     last_message_at: string | null;
@@ -59,9 +62,16 @@ interface ConversationRow {
     sin_responder: boolean;
 }
 
+interface Linea {
+    id: string;
+    nombre: string;
+    chats: number;
+}
+
 interface Selected {
     id: number;
     title: string;
+    linea: string | null;
     channel: string;
     bot_enabled: boolean;
     bot_paused_at: string | null;
@@ -95,12 +105,16 @@ export default function Inbox({
     conversations,
     selected,
     q = '',
+    linea = '',
+    lineas = [],
     total = 0,
     auto_selected: autoSelected = false,
 }: {
     conversations: ConversationRow[];
     selected: Selected | null;
     q?: string;
+    linea?: string;
+    lineas?: Linea[];
     total?: number;
     auto_selected?: boolean;
 }) {
@@ -120,6 +134,22 @@ export default function Inbox({
     const esperandoHumano = conversations.filter((c) => c.needs_human).length;
     const sinResponder = conversations.filter((c) => c.sin_responder && !c.needs_human).length;
 
+    // La búsqueda y la pestaña de número viajan juntas en cada navegación: si
+    // una se perdiera al abrir un chat, volver a la lista mostraría otra cosa.
+    // El refresco de cada 5 s no las necesita: `router.reload` repite la URL.
+    const filtros = (extra: Record<string, string | number> = {}) => ({
+        ...(q ? { q } : {}),
+        ...(linea ? { linea } : {}),
+        ...extra,
+    });
+
+    const elegirLinea = (id: string) =>
+        router.get(route('inbox.index'), { ...(q ? { q } : {}), ...(id ? { linea: id } : {}), lista: 1 }, {
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
+        });
+
     // La búsqueda va al servidor —hace falta para mirar dentro de los
     // mensajes—, pero no en cada tecla: se espera a que deje de escribir. El
     // valor que se ve es el local, así que el campo nunca "salta" cuando llega
@@ -130,7 +160,7 @@ export default function Inbox({
         if (busqueda === q) return;
 
         const id = setTimeout(() => {
-            router.get(route('inbox.index'), busqueda.trim() ? { q: busqueda.trim() } : {}, {
+            router.get(route('inbox.index'), { ...(busqueda.trim() ? { q: busqueda.trim() } : {}), ...(linea ? { linea } : {}) }, {
                 preserveState: true,
                 preserveScroll: true,
                 replace: true,
@@ -139,7 +169,7 @@ export default function Inbox({
         }, 350);
 
         return () => clearTimeout(id);
-    }, [busqueda, q]);
+    }, [busqueda, q, linea]);
 
     // Bajar solo si ya estaba abajo. Antes bajaba SIEMPRE que cambiaba el número
     // de mensajes, así que leer el historial de un chat en el computador era
@@ -283,6 +313,30 @@ export default function Inbox({
                                   : `${conversations.length} chats de WhatsApp`}
                         </p>
 
+                        {/* Pestañas por número. Solo con dos o más: con una
+                            sola línea serían ruido. */}
+                        {lineas.length > 1 && (
+                            <div className="mt-2 flex flex-wrap gap-1" role="tablist" aria-label="Filtrar por número">
+                                {[{ id: '', nombre: 'Todos', chats: lineas.reduce((n, l) => n + l.chats, 0) }, ...lineas].map((l) => (
+                                    <button
+                                        key={l.id || 'todos'}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={linea === l.id}
+                                        onClick={() => elegirLinea(l.id)}
+                                        className={cn(
+                                            'rounded-full border px-2.5 py-0.5 text-[11px] transition',
+                                            linea === l.id
+                                                ? 'border-primary/40 bg-primary/15 text-foreground font-medium'
+                                                : 'border-border/60 text-muted-foreground hover:bg-muted',
+                                        )}
+                                    >
+                                        {l.nombre} <span className="opacity-60">{l.chats}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
                         <div className="relative mt-2">
                             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
                             <input
@@ -341,7 +395,7 @@ export default function Inbox({
                                 // La búsqueda sobrevive al abrir un chat: si no,
                                 // volver a la lista devolvía los 300 y había que
                                 // teclear el número otra vez.
-                                onClick={() => router.get(route('inbox.show', c.id), q ? { q } : {}, { preserveState: true })}
+                                onClick={() => router.get(route('inbox.show', c.id), filtros(), { preserveState: true })}
                                 className={cn(
                                     'border-border/40 hover:bg-muted/50 flex w-full flex-col gap-1 border-b px-4 py-3 text-left transition',
                                     selected?.id === c.id && 'bg-muted',
@@ -355,7 +409,17 @@ export default function Inbox({
                                     doctora identifica a una paciente cuando el
                                     nombre viene del perfil de WhatsApp y no
                                     coincide con el de la historia. */}
-                                {c.lead?.phone && <span className="text-muted-foreground/80 truncate text-[11px]">{c.lead.phone}</span>}
+                                {(c.lead?.phone || c.linea) && (
+                                    <span className="text-muted-foreground/80 flex items-center gap-1.5 truncate text-[11px]">
+                                        {c.lead?.phone}
+                                        {/* Con dos números, a qué número escribió. */}
+                                        {lineas.length > 1 && c.linea && (
+                                            <span className="bg-muted inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-px text-[10px]">
+                                                <Phone className="size-2.5" /> {c.linea}
+                                            </span>
+                                        )}
+                                    </span>
+                                )}
                                 <span className="text-muted-foreground truncate text-xs">{c.preview || 'Sin mensajes'}</span>
                                 {/* Escalado y en pausa no son lo mismo: uno es una
                                     alerta por atender, el otro una decisión de la
@@ -396,7 +460,7 @@ export default function Inbox({
                                     donde la lista está oculta. */}
                                 <button
                                     type="button"
-                                    onClick={() => router.get(route('inbox.index'), q ? { lista: 1, q } : { lista: 1 }, { preserveState: true })}
+                                    onClick={() => router.get(route('inbox.index'), filtros({ lista: 1 }), { preserveState: true })}
                                     className="text-muted-foreground hover:bg-muted hover:text-foreground -ml-1 shrink-0 rounded-lg p-1.5 md:hidden"
                                     aria-label="Volver a las conversaciones"
                                 >
@@ -405,7 +469,11 @@ export default function Inbox({
 
                                 <div className="min-w-0 flex-1">
                                     <h2 className="font-display truncate text-lg">{selected.lead?.name || selected.title}</h2>
-                                    <p className="text-muted-foreground text-xs">{selected.lead?.phone || 'Sin teléfono'}</p>
+                                    <p className="text-muted-foreground text-xs">
+                                        {selected.lead?.phone || 'Sin teléfono'}
+                                        {/* Por dónde le va a llegar lo que se escriba aquí. */}
+                                        {selected.linea && <span className="ml-1.5">· escribió al {selected.linea}</span>}
+                                    </p>
                                 </div>
 
                                 {/* En celular el botón se queda en el icono: el

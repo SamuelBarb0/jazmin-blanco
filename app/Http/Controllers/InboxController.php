@@ -6,6 +6,7 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\WhatsAppService;
+use App\Support\Settings;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -53,6 +54,7 @@ class InboxController extends Controller
     {
         $user = $request->user();
         $q = trim((string) $request->query('q', ''));
+        $linea = trim((string) $request->query('linea', ''));
 
         $conversations = $user->conversations()
             // Va ANTES de los withMax: `select()` reemplaza la lista de
@@ -84,7 +86,29 @@ class InboxController extends Controller
             ->orderByDesc('last_message_at')
             ->get();
 
+        // Las pestañas salen de TODA la bandeja, antes de filtrar: si salieran
+        // de la lista filtrada, al elegir una línea desaparecería la otra.
+        // Se agrupa por la línea VIGENTE para que un número re-registrado (id
+        // nuevo) junte sus chats viejos y nuevos en una sola pestaña.
+        $lineas = $conversations
+            ->map(fn (Conversation $c) => Settings::lineaVigente($c->phone_number_id))
+            ->filter()
+            ->countBy()
+            ->map(fn (int $chats, string $id) => ['id' => $id, 'nombre' => Settings::nombreDeLinea($id), 'chats' => $chats])
+            ->sortByDesc('chats')
+            ->values();
+
+        if ($linea !== '') {
+            $conversations = $conversations
+                ->filter(fn (Conversation $c) => Settings::lineaVigente($c->phone_number_id) === $linea)
+                ->values();
+        }
+
         $total = $conversations->count();
+
+        // Ids de esta pestaña, para que el chat de relleno no abra uno de la
+        // OTRA línea (ver `relleno()`).
+        $idsDeLaPestana = $linea !== '' ? $conversations->pluck('id')->all() : null;
 
         $conversations = $q !== ''
             ? $this->buscar($conversations, $q)
@@ -96,6 +120,9 @@ class InboxController extends Controller
                 'title' => $c->title ?: ($c->lead?->name ?: 'Sin nombre'),
                 'lead' => $c->lead ? ['id' => $c->lead->id, 'name' => $c->lead->name, 'phone' => $c->lead->phone] : null,
                 'channel' => $c->channel,
+                // Por qué número escribió de último. Un chat por paciente: si
+                // usó los dos números, aquí sale el más reciente.
+                'linea' => Settings::nombreDeLinea(Settings::lineaVigente($c->phone_number_id)),
                 'bot_enabled' => $c->bot_enabled,
                 'needs_human' => $c->needsHuman(),
                 'last_message_at' => $c->last_message_at,
@@ -124,11 +151,13 @@ class InboxController extends Controller
             // está buscando, y taparía el resultado con otra conversación.
             : ($request->boolean('lista') || $q !== ''
                 ? null
-                : $this->relleno($user, (int) $request->query('abierta', 0)));
+                : $this->relleno($user, (int) $request->query('abierta', 0), $idsDeLaPestana));
 
         return Inertia::render('inbox/index', [
             'conversations' => $conversations,
             'q' => $q,
+            'linea' => $linea,
+            'lineas' => $lineas,
             'total' => $total,
             'selected' => $selected ? $this->serialize($selected) : null,
             // El servidor no sabe el tamaño de la pantalla, así que en vez de
@@ -149,9 +178,11 @@ class InboxController extends Controller
      * equivocada. Solo pasaba con el relleno, porque al abrir un chat a mano el
      * id va en la URL y ya no hay nada que adivinar.
      */
-    private function relleno(User $user, int $abierta): ?Conversation
+    private function relleno(User $user, int $abierta, ?array $soloEstos = null): ?Conversation
     {
-        $deLaClinica = fn () => $user->conversations()->where('channel', '!=', 'panel');
+        $deLaClinica = fn () => $user->conversations()
+            ->where('channel', '!=', 'panel')
+            ->when($soloEstos !== null, fn ($q) => $q->whereKey($soloEstos));
 
         return ($abierta > 0 ? $deLaClinica()->whereKey($abierta)->first() : null)
             ?? $deLaClinica()
@@ -459,6 +490,7 @@ class InboxController extends Controller
 
         return [
             'id' => $conversation->id,
+            'linea' => Settings::nombreDeLinea(Settings::lineaVigente($conversation->phone_number_id)),
             'title' => $conversation->title ?: ($conversation->lead?->name ?: 'Sin nombre'),
             'channel' => $conversation->channel,
             'bot_enabled' => $conversation->bot_enabled,

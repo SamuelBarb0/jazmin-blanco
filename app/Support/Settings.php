@@ -478,6 +478,36 @@ class Settings
     }
 
     /**
+     * Nombres de las líneas conocidas, para la bandeja. Se pueden sobrescribir o
+     * ampliar con el ajuste `whatsapp_lineas_nombres` (`id=nombre`, separados
+     * por coma) cuando entre un número nuevo.
+     */
+    private const NOMBRES_DE_LINEA = [
+        '1338308346036200' => '316 534 1047',
+        '1223241697541095' => '317 045 2356',
+    ];
+
+    /** Cómo se le muestra a la doctora una línea (por `phone_number_id`). */
+    public static function nombreDeLinea(?string $phoneId): ?string
+    {
+        if (blank($phoneId)) {
+            return null;
+        }
+
+        $nombres = self::NOMBRES_DE_LINEA;
+
+        foreach (preg_split('/,/', (string) self::get('whatsapp_lineas_nombres')) ?: [] as $par) {
+            [$id, $nombre] = array_pad(array_map('trim', explode('=', $par, 2)), 2, '');
+            if ($id !== '' && $nombre !== '') {
+                $nombres[$id] = $nombre;
+            }
+        }
+
+        // Sin nombre conocido, algo reconocible antes que el id entero.
+        return $nombres[$phoneId] ?? 'Línea …'.substr($phoneId, -4);
+    }
+
+    /**
      * ¿Está este número en la lista? Compara por los últimos 10 dígitos, así da
      * igual que se haya escrito con indicativo o sin él: Meta entrega el `from`
      * como `573123652269` y uno tiende a escribir `312 365 2269`.

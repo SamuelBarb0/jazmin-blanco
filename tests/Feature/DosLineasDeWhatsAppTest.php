@@ -208,6 +208,46 @@ class DosLineasDeWhatsAppTest extends TestCase
         Http::assertNotSent(fn ($req) => str_contains($req->url(), '/999999999999999/'));
     }
 
+    public function test_la_bandeja_separa_los_chats_por_numero(): void
+    {
+        $this->chat('573001112233', self::PRINCIPAL);
+        $this->chat('573004445566', self::SEGUNDA);
+        $this->chat('573007778899', self::SEGUNDA);
+
+        // Sin filtro: todos, con una pestaña por número y su cuenta.
+        $this->actingAs($this->doctora)->get(route('inbox.index', ['lista' => 1]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('conversations', 3)
+                ->has('lineas', 2)
+                ->where('lineas.0.id', self::SEGUNDA)
+                ->where('lineas.0.chats', 2));
+
+        // Con filtro: solo los de ese número, y las pestañas siguen siendo dos.
+        $this->actingAs($this->doctora)->get(route('inbox.index', ['lista' => 1, 'linea' => self::SEGUNDA]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('conversations', 2)
+                ->where('total', 2)
+                ->where('linea', self::SEGUNDA)
+                ->has('lineas', 2));
+    }
+
+    public function test_un_numero_reemplazado_junta_sus_chats_viejos_y_nuevos(): void
+    {
+        Settings::put('whatsapp_lineas_reemplazadas', '999999999999999='.self::SEGUNDA);
+        Settings::put('whatsapp_lineas_nombres', self::SEGUNDA.'=317 045 2356');
+        $this->chat('573001112233', '999999999999999');
+        $this->chat('573004445566', self::SEGUNDA);
+
+        $this->actingAs($this->doctora)->get(route('inbox.index', ['lista' => 1, 'linea' => self::SEGUNDA]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('conversations', 2)
+                ->where('conversations.0.linea', '317 045 2356')
+                ->has('lineas', 1));
+    }
+
     public function test_la_respuesta_a_mano_sale_por_la_linea_del_chat(): void
     {
         $chat = $this->chat('573001112233', self::SEGUNDA);
