@@ -487,6 +487,48 @@ class Settings
         '1223241697541095' => '317 045 2356',
     ];
 
+    /**
+     * Línea a la que se atribuyen los chats anteriores a guardar el
+     * `phone_number_id` (ago-2026): entonces solo atendía el 317.
+     */
+    public const LINEA_LEGADO = '1223241697541095';
+
+    /**
+     * Las líneas de la bandeja, en el orden de las pestañas, ya resueltas a su
+     * id vigente: las conocidas y las que aparezcan en `$deLosChats`.
+     *
+     * @param  iterable<string>  $deLosChats
+     * @return list<string>
+     */
+    public static function lineasDeLaBandeja(iterable $deLosChats = []): array
+    {
+        $ids = array_keys(self::nombresDeLinea());
+
+        foreach ($deLosChats as $id) {
+            $ids[] = $id;
+        }
+
+        return array_values(array_unique(array_filter(array_map(
+            fn ($id) => self::lineaVigente((string) $id),
+            $ids,
+        ))));
+    }
+
+    /** @return array<string,string> */
+    private static function nombresDeLinea(): array
+    {
+        $nombres = self::NOMBRES_DE_LINEA;
+
+        foreach (preg_split('/,/', (string) self::get('whatsapp_lineas_nombres')) ?: [] as $par) {
+            [$id, $nombre] = array_pad(array_map('trim', explode('=', $par, 2)), 2, '');
+            if ($id !== '' && $nombre !== '') {
+                $nombres[$id] = $nombre;
+            }
+        }
+
+        return $nombres;
+    }
+
     /** Cómo se le muestra a la doctora una línea (por `phone_number_id`). */
     public static function nombreDeLinea(?string $phoneId): ?string
     {
@@ -494,12 +536,15 @@ class Settings
             return null;
         }
 
-        $nombres = self::NOMBRES_DE_LINEA;
+        $nombres = self::nombresDeLinea();
 
-        foreach (preg_split('/,/', (string) self::get('whatsapp_lineas_nombres')) ?: [] as $par) {
-            [$id, $nombre] = array_pad(array_map('trim', explode('=', $par, 2)), 2, '');
-            if ($id !== '' && $nombre !== '') {
-                $nombres[$id] = $nombre;
+        // Sin nombre propio, el de la línea a la que reemplazó (el 317
+        // re-registrado sigue siendo el «317» para la doctora).
+        if (! isset($nombres[$phoneId])) {
+            foreach (array_keys($nombres) as $id) {
+                if (self::lineaVigente((string) $id) === $phoneId) {
+                    return $nombres[$id];
+                }
             }
         }
 

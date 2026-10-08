@@ -86,21 +86,42 @@ class InboxController extends Controller
             ->orderByDesc('last_message_at')
             ->get();
 
-        // Las pestañas salen de TODA la bandeja, antes de filtrar: si salieran
-        // de la lista filtrada, al elegir una línea desaparecería la otra.
-        // Se agrupa por la línea VIGENTE para que un número re-registrado (id
-        // nuevo) junte sus chats viejos y nuevos en una sola pestaña.
-        $lineas = $conversations
-            ->map(fn (Conversation $c) => Settings::lineaVigente($c->phone_number_id))
-            ->filter()
-            ->countBy()
-            ->map(fn (int $chats, string $id) => ['id' => $id, 'nombre' => Settings::nombreDeLinea($id), 'chats' => $chats])
-            ->sortByDesc('chats')
+        // Los segmentos (uno por número) salen de TODA la bandeja, antes de
+        // filtrar: si salieran de la lista filtrada, al elegir un número
+        // desaparecería el otro. Las líneas conocidas salen aunque no tengan
+        // chats todavía, y cada chat cuenta en su línea VIGENTE para que un
+        // número re-registrado junte sus chats viejos y nuevos.
+        $porLinea = $conversations->groupBy(fn (Conversation $c) => self::lineaDe($c));
+
+        $lineas = collect(Settings::lineasDeLaBandeja($porLinea->keys()))
+            ->map(fn (string $id) => [
+                'id' => $id,
+                'nombre' => Settings::nombreDeLinea($id),
+                'chats' => $porLinea->get($id)?->count() ?? 0,
+                // Lo que espera a alguien en ESTE número. Va en el segmento
+                // porque, con la bandeja partida, un chat escalado en el otro
+                // número no se vería.
+                'pendientes' => $porLinea->get($id)?->filter(fn (Conversation $c) => $c->needsHuman()
+                    || (! $c->bot_enabled && $c->last_role === 'user'))->count() ?? 0,
+            ])
             ->values();
+
+        // Con un solo número no hay nada que partir. Con dos o más, siempre se
+        // está en uno: sin elegir, el que tuvo el último mensaje.
+        if ($lineas->count() < 2) {
+            $linea = '';
+        } elseif (! $lineas->contains('id', $linea)) {
+            // Un chat abierto por enlace directo manda: su número, no el último.
+            $linea = match (true) {
+                (bool) $conversation?->exists => self::lineaDe($conversation),
+                $conversations->isNotEmpty() => self::lineaDe($conversations->first()),
+                default => $lineas->first()['id'],
+            };
+        }
 
         if ($linea !== '') {
             $conversations = $conversations
-                ->filter(fn (Conversation $c) => Settings::lineaVigente($c->phone_number_id) === $linea)
+                ->filter(fn (Conversation $c) => self::lineaDe($c) === $linea)
                 ->values();
         }
 
@@ -122,7 +143,7 @@ class InboxController extends Controller
                 'channel' => $c->channel,
                 // Por qué número escribió de último. Un chat por paciente: si
                 // usó los dos números, aquí sale el más reciente.
-                'linea' => Settings::nombreDeLinea(Settings::lineaVigente($c->phone_number_id)),
+                'linea' => Settings::nombreDeLinea(self::lineaDe($c)),
                 'bot_enabled' => $c->bot_enabled,
                 'needs_human' => $c->needsHuman(),
                 'last_message_at' => $c->last_message_at,
@@ -166,6 +187,15 @@ class InboxController extends Controller
             // celular ese relleno se oculta por CSS y se ve la lista.
             'auto_selected' => $selected !== null && ! $conversation?->exists,
         ]);
+    }
+
+    /**
+     * El número al que pertenece un chat en la bandeja. Los anteriores a guardar
+     * la línea van con el 317, que era el único que atendía entonces.
+     */
+    private static function lineaDe(Conversation $c): ?string
+    {
+        return Settings::lineaVigente($c->phone_number_id ?: Settings::LINEA_LEGADO);
     }
 
     /**
@@ -490,7 +520,7 @@ class InboxController extends Controller
 
         return [
             'id' => $conversation->id,
-            'linea' => Settings::nombreDeLinea(Settings::lineaVigente($conversation->phone_number_id)),
+            'linea' => Settings::nombreDeLinea(self::lineaDe($conversation)),
             'title' => $conversation->title ?: ($conversation->lead?->name ?: 'Sin nombre'),
             'channel' => $conversation->channel,
             'bot_enabled' => $conversation->bot_enabled,

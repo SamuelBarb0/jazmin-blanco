@@ -12,7 +12,6 @@ import {
     HandHelping,
     MessageCircle,
     Paperclip,
-    Phone,
     Pause,
     Play,
     Search,
@@ -66,7 +65,12 @@ interface Linea {
     id: string;
     nombre: string;
     chats: number;
+    /** Chats de este número que esperan a una persona o a que alguien conteste. */
+    pendientes: number;
 }
+
+/** Último número elegido en este dispositivo. Es comodidad: sin él, se abre el del último mensaje. */
+const CLAVE_LINEA = 'bandeja.linea';
 
 interface Selected {
     id: number;
@@ -143,12 +147,43 @@ export default function Inbox({
         ...extra,
     });
 
-    const elegirLinea = (id: string) =>
-        router.get(route('inbox.index'), { ...(q ? { q } : {}), ...(id ? { linea: id } : {}), lista: 1 }, {
-            preserveState: true,
-            preserveScroll: true,
-            replace: true,
-        });
+    const elegirLinea = (id: string, reemplazar = false) => {
+        try {
+            localStorage.setItem(CLAVE_LINEA, id);
+        } catch {
+            // Sin almacenamiento (navegación privada): solo se pierde el recuerdo.
+        }
+        router.get(
+            route('inbox.index'),
+            { ...(q ? { q } : {}), linea: id },
+            {
+                preserveState: true,
+                preserveScroll: true,
+                replace: reemplazar,
+            },
+        );
+    };
+
+    // El número elegido tiene que quedar EN LA URL. El refresco de cada 5 s
+    // repite la URL tal cual, y sin el parámetro el servidor volvería a elegir
+    // «el del último mensaje»: la bandeja saltaría de número sola en cuanto
+    // escribieran por el otro.
+    useEffect(() => {
+        if (lineas.length < 2 || new URLSearchParams(window.location.search).has('linea')) return;
+
+        let recordada: string | null = null;
+        try {
+            recordada = localStorage.getItem(CLAVE_LINEA);
+        } catch {
+            recordada = null;
+        }
+        // Con un chat abierto por enlace, manda el número de ese chat.
+        const destino = !autoSelected && selected ? linea : lineas.some((l) => l.id === recordada) ? recordada! : linea;
+
+        router.get(window.location.pathname, { ...(q ? { q } : {}), linea: destino }, { preserveState: true, preserveScroll: true, replace: true });
+        // Solo al entrar: después la URL ya lleva el número.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // La búsqueda va al servidor —hace falta para mirar dentro de los
     // mensajes—, pero no en cada tecla: se espera a que deje de escribir. El
@@ -160,12 +195,16 @@ export default function Inbox({
         if (busqueda === q) return;
 
         const id = setTimeout(() => {
-            router.get(route('inbox.index'), { ...(busqueda.trim() ? { q: busqueda.trim() } : {}), ...(linea ? { linea } : {}) }, {
-                preserveState: true,
-                preserveScroll: true,
-                replace: true,
-                only: ['conversations', 'q', 'total', 'selected', 'auto_selected'],
-            });
+            router.get(
+                route('inbox.index'),
+                { ...(busqueda.trim() ? { q: busqueda.trim() } : {}), ...(linea ? { linea } : {}) },
+                {
+                    preserveState: true,
+                    preserveScroll: true,
+                    replace: true,
+                    only: ['conversations', 'q', 'total', 'selected', 'auto_selected'],
+                },
+            );
         }, 350);
 
         return () => clearTimeout(id);
@@ -300,6 +339,45 @@ export default function Inbox({
             <div className="flex min-h-0 flex-1 gap-4 p-2 md:p-4">
                 {/* ── Lista de chats ─────────────────────────────── */}
                 <aside className={cn('glass w-full shrink-0 flex-col overflow-hidden rounded-xl md:flex md:w-80', listaEnMovil ? 'flex' : 'hidden')}>
+                    {/* Un segmento por número, como dos bandejas. Solo con dos o
+                        más: con un número no hay nada que partir. */}
+                    {lineas.length > 1 && (
+                        <nav
+                            className="border-border/60 grid shrink-0 border-b"
+                            style={{ gridTemplateColumns: `repeat(${lineas.length}, minmax(0, 1fr))` }}
+                            role="tablist"
+                            aria-label="Número de WhatsApp"
+                        >
+                            {lineas.map((l) => {
+                                const activa = linea === l.id;
+                                return (
+                                    <button
+                                        key={l.id}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={activa}
+                                        onClick={() => !activa && elegirLinea(l.id)}
+                                        className={cn(
+                                            'hover:bg-muted/50 relative flex items-center justify-center gap-1.5 px-2 pt-3 pb-3.5 text-sm transition',
+                                            activa ? 'text-foreground font-semibold' : 'text-muted-foreground',
+                                        )}
+                                    >
+                                        <span className="truncate">{l.nombre}</span>
+                                        {/* Lo pendiente se ve desde el OTRO segmento: si no,
+                                            un chat escalado en el número que no se está
+                                            mirando pasaría desapercibido. */}
+                                        {l.pendientes > 0 && (
+                                            <span className="shrink-0 rounded-full bg-rose-500 px-1.5 text-[10px] leading-4 font-semibold text-white">
+                                                {l.pendientes}
+                                            </span>
+                                        )}
+                                        {activa && <span className="bg-primary absolute bottom-0 left-1/2 h-1 w-14 -translate-x-1/2 rounded-full" />}
+                                    </button>
+                                );
+                            })}
+                        </nav>
+                    )}
+
                     <header className="border-border/60 border-b px-4 py-3">
                         <h2 className="font-display text-lg">Conversaciones</h2>
                         <p className="text-muted-foreground text-xs">
@@ -312,30 +390,6 @@ export default function Inbox({
                                   ? `${conversations.length} de ${total} chats — busca para ver los demás`
                                   : `${conversations.length} chats de WhatsApp`}
                         </p>
-
-                        {/* Pestañas por número. Solo con dos o más: con una
-                            sola línea serían ruido. */}
-                        {lineas.length > 1 && (
-                            <div className="mt-2 flex flex-wrap gap-1" role="tablist" aria-label="Filtrar por número">
-                                {[{ id: '', nombre: 'Todos', chats: lineas.reduce((n, l) => n + l.chats, 0) }, ...lineas].map((l) => (
-                                    <button
-                                        key={l.id || 'todos'}
-                                        type="button"
-                                        role="tab"
-                                        aria-selected={linea === l.id}
-                                        onClick={() => elegirLinea(l.id)}
-                                        className={cn(
-                                            'rounded-full border px-2.5 py-0.5 text-[11px] transition',
-                                            linea === l.id
-                                                ? 'border-primary/40 bg-primary/15 text-foreground font-medium'
-                                                : 'border-border/60 text-muted-foreground hover:bg-muted',
-                                        )}
-                                    >
-                                        {l.nombre} <span className="opacity-60">{l.chats}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
 
                         <div className="relative mt-2">
                             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
@@ -409,17 +463,7 @@ export default function Inbox({
                                     doctora identifica a una paciente cuando el
                                     nombre viene del perfil de WhatsApp y no
                                     coincide con el de la historia. */}
-                                {(c.lead?.phone || c.linea) && (
-                                    <span className="text-muted-foreground/80 flex items-center gap-1.5 truncate text-[11px]">
-                                        {c.lead?.phone}
-                                        {/* Con dos números, a qué número escribió. */}
-                                        {lineas.length > 1 && c.linea && (
-                                            <span className="bg-muted inline-flex shrink-0 items-center gap-0.5 rounded px-1.5 py-px text-[10px]">
-                                                <Phone className="size-2.5" /> {c.linea}
-                                            </span>
-                                        )}
-                                    </span>
-                                )}
+                                {c.lead?.phone && <span className="text-muted-foreground/80 truncate text-[11px]">{c.lead.phone}</span>}
                                 <span className="text-muted-foreground truncate text-xs">{c.preview || 'Sin mensajes'}</span>
                                 {/* Escalado y en pausa no son lo mismo: uno es una
                                     alerta por atender, el otro una decisión de la

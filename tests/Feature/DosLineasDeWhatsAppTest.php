@@ -210,42 +210,64 @@ class DosLineasDeWhatsAppTest extends TestCase
 
     public function test_la_bandeja_separa_los_chats_por_numero(): void
     {
-        $this->chat('573001112233', self::PRINCIPAL);
-        $this->chat('573004445566', self::SEGUNDA);
-        $this->chat('573007778899', self::SEGUNDA);
+        $this->chat('573001112233', self::PRINCIPAL, horasDesdeSuMensaje: 5);
+        $this->chat('573004445566', self::SEGUNDA, horasDesdeSuMensaje: 3);
+        $this->chat('573007778899', self::SEGUNDA, horasDesdeSuMensaje: 1);
 
-        // Sin filtro: todos, con una pestaña por número y su cuenta.
+        // Con un número elegido: solo sus chats, y los segmentos de todos.
+        $this->actingAs($this->doctora)->get(route('inbox.index', ['lista' => 1, 'linea' => self::PRINCIPAL]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->has('conversations', 1)
+                ->where('total', 1)
+                ->where('linea', self::PRINCIPAL)
+                ->where('lineas', fn ($lineas) => collect($lineas)->firstWhere('id', self::SEGUNDA)['chats'] === 2));
+    }
+
+    public function test_sin_elegir_se_abre_el_numero_del_ultimo_mensaje(): void
+    {
+        $this->chat('573001112233', self::PRINCIPAL, horasDesdeSuMensaje: 5);
+        $this->chat('573004445566', self::SEGUNDA, horasDesdeSuMensaje: 1);
+
+        $this->actingAs($this->doctora)->get(route('inbox.index', ['lista' => 1]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where('linea', self::SEGUNDA)->has('conversations', 1));
+    }
+
+    public function test_los_numeros_conocidos_salen_aunque_no_tengan_chats(): void
+    {
         $this->actingAs($this->doctora)->get(route('inbox.index', ['lista' => 1]))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
-                ->has('conversations', 3)
-                ->has('lineas', 2)
-                ->where('lineas.0.id', self::SEGUNDA)
-                ->where('lineas.0.chats', 2));
+                ->where('lineas.0.nombre', '316 534 1047')
+                ->where('lineas.0.chats', 0)
+                ->where('lineas.1.nombre', '317 045 2356'));
+    }
 
-        // Con filtro: solo los de ese número, y las pestañas siguen siendo dos.
-        $this->actingAs($this->doctora)->get(route('inbox.index', ['lista' => 1, 'linea' => self::SEGUNDA]))
+    public function test_el_segmento_cuenta_lo_que_espera_a_una_persona(): void
+    {
+        $chat = $this->chat('573001112233', self::SEGUNDA);
+        $chat->forceFill(['escalated_at' => now()])->save();
+        $this->chat('573004445566', self::PRINCIPAL);
+
+        $this->actingAs($this->doctora)->get(route('inbox.index', ['lista' => 1, 'linea' => self::PRINCIPAL]))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
-                ->has('conversations', 2)
-                ->where('total', 2)
-                ->where('linea', self::SEGUNDA)
-                ->has('lineas', 2));
+                ->where('lineas', fn ($lineas) => collect($lineas)->firstWhere('id', self::SEGUNDA)['pendientes'] === 1));
     }
 
     public function test_un_numero_reemplazado_junta_sus_chats_viejos_y_nuevos(): void
     {
-        Settings::put('whatsapp_lineas_reemplazadas', '999999999999999='.self::SEGUNDA);
-        Settings::put('whatsapp_lineas_nombres', self::SEGUNDA.'=317 045 2356');
-        $this->chat('573001112233', '999999999999999');
+        Settings::put('whatsapp_lineas_reemplazadas', Settings::LINEA_LEGADO.'='.self::SEGUNDA);
+        $this->chat('573001112233', Settings::LINEA_LEGADO);
         $this->chat('573004445566', self::SEGUNDA);
 
         $this->actingAs($this->doctora)->get(route('inbox.index', ['lista' => 1, 'linea' => self::SEGUNDA]))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->has('conversations', 2)
-                ->where('conversations.0.linea', '317 045 2356')
-                ->has('lineas', 1));
+                // Sigue llamándose como el número que reemplazó.
+                ->where('conversations.0.linea', '317 045 2356'));
     }
 
     public function test_la_respuesta_a_mano_sale_por_la_linea_del_chat(): void
