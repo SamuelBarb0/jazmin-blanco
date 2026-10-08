@@ -147,6 +147,10 @@ export default function Inbox({
         ...extra,
     });
 
+    // El refresco vive en un efecto montado una sola vez; lee el número de aquí.
+    const lineaActual = useRef(linea);
+    lineaActual.current = linea;
+
     const elegirLinea = (id: string, reemplazar = false) => {
         try {
             localStorage.setItem(CLAVE_LINEA, id);
@@ -164,12 +168,13 @@ export default function Inbox({
         );
     };
 
-    // El número elegido tiene que quedar EN LA URL. El refresco de cada 5 s
-    // repite la URL tal cual, y sin el parámetro el servidor volvería a elegir
-    // «el del último mensaje»: la bandeja saltaría de número sola en cuanto
-    // escribieran por el otro.
+    // Volver al número que se eligió la última vez en este dispositivo. Solo al
+    // entrar y solo si la URL no trae uno: un chat abierto por enlace manda.
+    // Va en un `setTimeout` porque Inertia descarta una visita lanzada durante
+    // el montaje inicial de la página (no sale ni la petición).
     useEffect(() => {
         if (lineas.length < 2 || new URLSearchParams(window.location.search).has('linea')) return;
+        if (selected && !autoSelected) return;
 
         let recordada: string | null = null;
         try {
@@ -177,11 +182,11 @@ export default function Inbox({
         } catch {
             recordada = null;
         }
-        // Con un chat abierto por enlace, manda el número de ese chat.
-        const destino = !autoSelected && selected ? linea : lineas.some((l) => l.id === recordada) ? recordada! : linea;
+        if (!recordada || recordada === linea || !lineas.some((l) => l.id === recordada)) return;
 
-        router.get(window.location.pathname, { ...(q ? { q } : {}), linea: destino }, { preserveState: true, preserveScroll: true, replace: true });
-        // Solo al entrar: después la URL ya lleva el número.
+        const id = setTimeout(() => elegirLinea(recordada!, true), 0);
+        return () => clearTimeout(id);
+        // Solo al entrar.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -256,7 +261,10 @@ export default function Inbox({
         // de la doctora eso se paga en datos.
         const refrescar = () => {
             if (document.visibilityState !== 'visible') return;
-            router.reload({ only: ['conversations'] });
+            // Con el número explícito: sin él, el servidor volvería a elegir «el
+            // del último mensaje» y la bandeja saltaría de número sola en cuanto
+            // escribieran por el otro.
+            router.reload({ only: ['conversations', 'linea', 'lineas'], data: lineaActual.current ? { linea: lineaActual.current } : {} });
         };
 
         const id = setInterval(refrescar, 5000);
