@@ -61,6 +61,18 @@ class BotService
     private ?string $datosPagoPorAnexar = null;
 
     /**
+     * Encabeza en el historial los mensajes que escribió a mano el equipo, para
+     * que el modelo no los tome por suyos. Ver `reply()`.
+     */
+    public const MARCA_EQUIPO = '[Mensaje escrito a mano por el equipo del consultorio, no por ti]';
+
+    /**
+     * Cuánto tiempo después de que el equipo escribió a mano se considera que
+     * el chat sigue en sus manos. Ver `guardaDeCitaInventada()`.
+     */
+    private const HORAS_DE_INTERVENCION_DEL_EQUIPO = 72;
+
+    /**
      * ¿Se tocó de verdad la agenda en este turno?
      *
      * Se enciende cuando agendar_cita, reagendar_cita o cancelar_cita SÍ
@@ -114,10 +126,21 @@ class BotService
         // confirmar nada en este.
         $this->agendaTocadaEnEsteTurno = false;
 
+        // Lo que escribió a mano una persona del consultorio se guarda como
+        // `assistant` (sale por el mismo número), y sin marca el modelo lo lee
+        // como si lo hubiera escrito ella. Caso de Yeimy Torres (25/10/2026):
+        // el equipo firmó un mensaje como la doctora, y Lore —que tiene
+        // prohibido hacerse pasar por ella— le escribió a la paciente que ese
+        // mensaje «no lo escribí yo», desautorizando al consultorio.
         $messages = $conversation->messages()
             ->orderBy('id')
-            ->get(['role', 'content'])
-            ->map(fn ($m) => ['role' => $m->role, 'content' => $m->content])
+            ->get(['role', 'sent_by', 'content'])
+            ->map(fn ($m) => [
+                'role' => $m->role,
+                'content' => $m->role === 'assistant' && $m->sent_by === 'human'
+                    ? self::MARCA_EQUIPO."\n".$m->content
+                    : $m->content,
+            ])
             ->all();
 
         $system = $this->systemPrompt($campaign);
@@ -157,8 +180,10 @@ class BotService
                 continue;
             }
 
-            // Respuesta final de texto.
+            // Respuesta final de texto. Si el modelo imitó la marca del
+            // historial, se quita: la paciente no tiene por qué verla.
             $text = collect($blocks)->where('type', 'text')->pluck('text')->implode("\n");
+            $text = trim(str_replace(self::MARCA_EQUIPO, '', $text));
 
             $guardado = $this->guardaDeCitaInventada($text);
 
@@ -233,8 +258,34 @@ class BotService
             ])->save();
         }
 
+        // Caso de Lucy Salazar (25/10/2026): pagó, el equipo le confirmó la
+        // cita a mano y ella respondió «Gracias». Lore retomó el chat, intentó
+        // agendar otra vez, la herramienta le pidió el comprobante y dejó los
+        // datos de transferencia en cola; Lore repitió «tu cita quedó...», la
+        // guarda lo cortó... y al aviso se le pegaron las cuentas bancarias.
+        // Este mensaje nunca lleva datos de pago.
+        $this->datosPagoPorAnexar = null;
+
+        // Si el equipo acaba de atender este chat a mano, lo más probable es
+        // que la cita la haya confirmado una persona: «déjame confirmarlo con
+        // el equipo» contradice lo que la paciente ya leyó. El chat queda
+        // escalado igual, pero no sale nada.
+        if ($this->elEquipoAtendioHacePoco()) {
+            return '';
+        }
+
         return 'Déjame confirmar ese cambio con el equipo del consultorio para no darte una hora equivocada 😊 '
             .'Una persona te escribe por este mismo chat enseguida 💙';
+    }
+
+    /** ¿Alguien del consultorio escribió a mano en este chat hace poco? */
+    private function elEquipoAtendioHacePoco(): bool
+    {
+        return (bool) $this->conversation?->messages()
+            ->where('role', 'assistant')
+            ->where('sent_by', 'human')
+            ->where('created_at', '>=', now()->subHours(self::HORAS_DE_INTERVENCION_DEL_EQUIPO))
+            ->exists();
     }
 
     /**
@@ -2084,6 +2135,7 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         // La fórmula ÚNICA con la que se presenta. Se arma una vez y se usa en
         // los tres sitios donde antes cada uno decía una cosa distinta.
         $quienEs = "{$c['bot_name']}, la asistente de {$c['doctor_name']}";
+        $marcaEquipo = self::MARCA_EQUIPO;
 
         $presentacion = match (true) {
             // Primer contacto: la paciente no tiene idea de quién le escribe.
@@ -2112,6 +2164,14 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         - Preséntate SIEMPRE igual: «{$quienEs}». Nunca como asistente «del consultorio» a secas ni con el nombre de la clínica en lugar del de la doctora.
         - Eres la asistente VIRTUAL: no eres {$c['doctor_name']} ni parte del equipo médico. Si el paciente pregunta si eres una persona real, un bot o una inteligencia artificial, acláralo con naturalidad y sin rodeos ("Soy {$quienEs}; soy virtual, te ayudo con información y a agendar tu valoración con la doctora").
         - NUNCA afirmes ser humana ni te hagas pasar por la doctora.
+
+        # Cuando el equipo del consultorio escribió en el chat
+        En el historial, los mensajes que empiezan con «{$marcaEquipo}» los escribió una persona real: {$c['doctor_name']} o alguien de su equipo, desde este mismo número. Aunque estén firmados con el nombre de la doctora, son legítimos.
+        - Lo que dijeron vale y manda sobre lo que tú creías: si confirmaron una cita, esa cita está confirmada; si dieron un precio, una indicación o una respuesta, es la oficial.
+        - Retoma desde ahí con naturalidad, como una compañera que leyó el chat. NUNCA los desmientas, ni aclares que no los escribiste tú, ni comentes quién los firmó, ni le pidas a la paciente que no los tome en cuenta.
+        - No repitas lo que ya resolvieron: no vuelvas a agendar ni a cobrar una cita que ellos confirmaron, no reenvíes datos de pago que ya no hacen falta.
+        - Si después de eso la paciente solo agradece o se despide («gracias», «listo», «ok»), contéstale con una línea corta y cálida, sin preguntas ni ofertas.
+        - Jamás escribas esa marca entre corchetes en tus mensajes.
 
         # Tu objetivo
         Resolver dudas frecuentes, construir valor y, cuando el paciente muestre interés real, motivar y ayudar a agendar una valoración. Nunca presionas; acompañas.

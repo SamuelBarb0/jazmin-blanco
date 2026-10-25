@@ -184,6 +184,12 @@ class ResumePausedConversations extends Command
                         $conversation->campaign_id ? $conversation->campaign : null,
                     );
 
+                    // Respuesta vacía: la guarda de citas escaló el chat sin
+                    // decir nada. No hay qué guardar ni pausa que levantar.
+                    if (trim($result['text']) === '' && empty($result['media'])) {
+                        continue;
+                    }
+
                     if (trim($result['text']) !== '') {
                         $linea->sendText($telefono, $result['text']);
                     }
@@ -251,6 +257,13 @@ class ResumePausedConversations extends Command
 
     private function reanudar(Conversation $conversation): void
     {
+        // Si al contestar Lore escaló el chat (la guarda de citas), levantar la
+        // pausa la dejaría respondiendo debajo del aviso «ya dejó de responder
+        // aquí». Escalado es escalado.
+        if ($conversation->escalated_at) {
+            return;
+        }
+
         $conversation->forceFill([
             'bot_enabled' => true,
             'bot_paused_at' => null,

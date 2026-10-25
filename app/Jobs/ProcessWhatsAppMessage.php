@@ -290,6 +290,15 @@ class ProcessWhatsAppMessage implements ShouldQueue
 
             $result = $bot->reply($conversation, $campaignForBot);
 
+            // Respuesta vacía: Lore decidió no decir nada (la guarda de citas
+            // cuando el equipo acaba de atender el chat). Un mensaje vacío en
+            // el historial además rompería la siguiente llamada a la API.
+            if (trim($result['text']) === '' && empty($result['media'])) {
+                $rastro?->marcar(WebhookHit::RESULTADO_IGNORADO, 'Lore no respondió: chat escalado al equipo', $conversation->id);
+
+                return;
+            }
+
             // Texto primero…
             if (trim($result['text']) !== '') {
                 $whatsapp->sendText($this->from, $result['text']);
