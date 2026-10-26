@@ -18,7 +18,12 @@ class ValorDeLaValoracionTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_lore_cotiza_el_valor_del_ajuste_de_pagos_y_no_habla_de_abonos(): void
+    /**
+     * Ese mismo día aclaró: «sin abonos» era no fragmentar el pago. Que el valor
+     * se abona al procedimiento SE QUEDA: sin eso las pacientes creen que lo
+     * pierden.
+     */
+    public function test_lore_cotiza_el_valor_completo_y_dice_que_se_abona_al_procedimiento(): void
     {
         config()->set('services.anthropic.key', 'sk-de-prueba');
         Settings::setValoracionAmount(150000);
@@ -26,8 +31,9 @@ class ValorDeLaValoracionTest extends TestCase
         $prompt = BotService::fromUser(User::factory()->create())->systemPrompt();
 
         $this->assertStringContainsString('es $150.000', $prompt);
-        $this->assertStringNotContainsString('se le ABONA', $prompt);
-        $this->assertStringContainsString('NO digas que la valoración se abona', $prompt);
+        $this->assertStringContainsString('El pago NO se fragmenta', $prompt);
+        $this->assertStringContainsString('se le ABONA al costo del procedimiento', $prompt);
+        $this->assertStringNotContainsString('NO digas que la valoración se abona', $prompt);
     }
 
     /**
