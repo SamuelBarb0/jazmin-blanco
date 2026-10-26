@@ -29,4 +29,19 @@ class ValorDeLaValoracionTest extends TestCase
         $this->assertStringNotContainsString('se le ABONA', $prompt);
         $this->assertStringContainsString('NO digas que la valoración se abona', $prompt);
     }
+
+    /**
+     * 26/10/2026: a pacientes de Neiva, Barranquilla o Bucaramanga Lore les
+     * decía que dejaba la consulta con el equipo. La doctora quiere que se les
+     * diga de una vez que solo atiende en Bogotá.
+     */
+    public function test_a_pacientes_de_otras_ciudades_no_las_escala(): void
+    {
+        config()->set('services.anthropic.key', 'sk-de-prueba');
+
+        $prompt = BotService::fromUser(User::factory()->create())->systemPrompt();
+
+        $this->assertStringContainsString('es la ÚNICA sede', $prompt);
+        $this->assertStringContainsString('NO escales con escalar_a_humano ni le digas que dejaste su consulta con el equipo', $prompt);
+    }
 }
