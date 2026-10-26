@@ -34,6 +34,7 @@ class ValorDeLaValoracionTest extends TestCase
         $this->assertStringContainsString('El pago NO se fragmenta', $prompt);
         $this->assertStringContainsString('se le ABONA al costo del procedimiento', $prompt);
         $this->assertStringNotContainsString('NO digas que la valoración se abona', $prompt);
+        $this->assertStringContainsString('MANDAN sobre la base de conocimiento', $prompt);
     }
 
     /**
