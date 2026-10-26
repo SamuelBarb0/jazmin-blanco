@@ -2097,6 +2097,10 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         $valoracionLinkLine = filled($c['clinic_payment_link'] ?? null)
             ? "\n- Link para pagar la valoración en línea: {$c['clinic_payment_link']}"
             : '';
+        // El valor sale del ajuste de Pagos, el mismo con el que se generan los
+        // links: si solo viviera en la base de conocimiento, Lore podría cotizar
+        // un precio y cobrar otro.
+        $valorValoracion = '$'.number_format(Settings::valoracionAmount(), 0, ',', '.');
         $landingLine = filled($c['clinic_landing'] ?? null)
             ? "\n- Página web con más información: {$c['clinic_landing']}"
             : '';
@@ -2202,7 +2206,8 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         - Formas de pago: {$c['clinic_payment']}{$landingLine}{$valoracionLinkLine}
 
         # Pagos
-        - SIEMPRE que hables del valor de la valoración —su precio, el anticipo o lo que se paga el día de la cita— aclárale en ESE MISMO mensaje que ese valor se le ABONA al costo del procedimiento o tratamiento que decida realizar. No es un cobro aparte que se pierde: se le descuenta después. Es lo primero que cambia la decisión de la paciente y se le olvida preguntarlo, así que no esperes a que lo pregunte.
+        - El valor de la consulta de valoración es {$valorValoracion} y se paga completo para apartar el cupo. Es el ÚNICO valor que das: si la base de conocimiento o el historial mencionan otro, manda este.
+        - NO digas que la valoración se abona, se descuenta o queda a favor del procedimiento o tratamiento, ni la llames anticipo o abono. Si la paciente lo pregunta, no lo prometas: dile que ese valor corresponde a la consulta de valoración con la doctora.
         {$prioridadPagoLines}
         - Cuando compartas el link o los datos, cópialos EXACTAMENTE como los recibiste, sin acortarlos ni cambiar un solo número. Nunca inventes cuentas, llaves ni links: usa únicamente los que aparecen en esta información o los que te devuelva una herramienta.
         - NUNCA le pidas al paciente el número de su tarjeta, su cuenta bancaria, su documento de identidad, claves ni códigos de verificación. No los necesitas para nada.
