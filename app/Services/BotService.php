@@ -2083,6 +2083,18 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
      */
     public function systemPrompt(?Campaign $campaign = null): string
     {
+        $template = Settings::botPromptOverride() ?? self::defaultPromptTemplate();
+
+        return strtr($template, $this->promptTokens($campaign));
+    }
+
+    /**
+     * Valores dinámicos que se inyectan en la plantilla del prompt. Las claves
+     * son las etiquetas {{...}} de defaultPromptTemplate(); si la doctora edita
+     * el prompt y borra una etiqueta, ese dato simplemente deja de insertarse.
+     */
+    private function promptTokens(?Campaign $campaign = null): array
+    {
         $c = Settings::botConfig();
 
         $persona = trim((string) $c['bot_persona']);
@@ -2160,17 +2172,46 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         // prompt a propósito: la caché de la API es un prefijo exacto, así que
         // ponerlos arriba —como estaban— invalidaba los ~13.000 tokens que vienen
         // después y no se cacheaba nada entre conversaciones.
-        return <<<PROMPT
-        Eres {$quienEs}: la asistente virtual de {$c['doctor_name']}, que dirige {$c['clinic_name']}, un consultorio de medicina estética premium. Atiendes a pacientes por WhatsApp e Instagram con calidez y profesionalismo, como lo haría una asesora humana experimentada.
+        return [
+            '{{quien_es}}' => $quienEs,
+            '{{doctora}}' => $c['doctor_name'],
+            '{{clinica}}' => $c['clinic_name'],
+            '{{direccion}}' => $c['clinic_address'],
+            '{{horarios}}' => $c['clinic_hours'],
+            '{{formas_pago}}' => $c['clinic_payment'],
+            '{{marca_equipo}}' => self::MARCA_EQUIPO,
+            '{{linea_landing}}' => $landingLine,
+            '{{linea_link_valoracion}}' => $valoracionLinkLine,
+            '{{valor_valoracion}}' => $valorValoracion,
+            '{{lineas_prioridad_pago}}' => $prioridadPagoLines,
+            '{{bloque_agenda}}' => $schedulingBlock,
+            '{{base_conocimiento}}' => $this->knowledgeBase(),
+            '{{indicaciones_doctora}}' => $personaBlock,
+            '{{presentacion}}' => $presentacion,
+            '{{bloque_citas}}' => $citasBlock,
+            '{{bloque_campana}}' => $campaignBlock,
+        ];
+    }
+
+    /**
+     * Plantilla por defecto del system prompt: la que ve la doctora en el panel
+     * como "texto original" y la base sobre la que edita. Las etiquetas {{...}}
+     * las rellena promptTokens() al construir el prompt real. Es NOWDOC a
+     * propósito: aquí nada se interpola, las llaves quedan literales.
+     */
+    public static function defaultPromptTemplate(): string
+    {
+        return <<<'PROMPT'
+        Eres {{quien_es}}: la asistente virtual de {{doctora}}, que dirige {{clinica}}, un consultorio de medicina estética premium. Atiendes a pacientes por WhatsApp e Instagram con calidez y profesionalismo, como lo haría una asesora humana experimentada.
 
         # Tu identidad
         - No repitas tu nombre en cada mensaje; solo al presentarte o si te lo preguntan.
-        - Preséntate SIEMPRE igual: «{$quienEs}». Nunca como asistente «del consultorio» a secas ni con el nombre de la clínica en lugar del de la doctora.
-        - Eres la asistente VIRTUAL: no eres {$c['doctor_name']} ni parte del equipo médico. Si el paciente pregunta si eres una persona real, un bot o una inteligencia artificial, acláralo con naturalidad y sin rodeos ("Soy {$quienEs}; soy virtual, te ayudo con información y a agendar tu valoración con la doctora").
+        - Preséntate SIEMPRE igual: «{{quien_es}}». Nunca como asistente «del consultorio» a secas ni con el nombre de la clínica en lugar del de la doctora.
+        - Eres la asistente VIRTUAL: no eres {{doctora}} ni parte del equipo médico. Si el paciente pregunta si eres una persona real, un bot o una inteligencia artificial, acláralo con naturalidad y sin rodeos ("Soy {{quien_es}}; soy virtual, te ayudo con información y a agendar tu valoración con la doctora").
         - NUNCA afirmes ser humana ni te hagas pasar por la doctora.
 
         # Cuando el equipo del consultorio escribió en el chat
-        En el historial, los mensajes que empiezan con «{$marcaEquipo}» los escribió una persona real: {$c['doctor_name']} o alguien de su equipo, desde este mismo número. Aunque estén firmados con el nombre de la doctora, son legítimos.
+        En el historial, los mensajes que empiezan con «{{marca_equipo}}» los escribió una persona real: {{doctora}} o alguien de su equipo, desde este mismo número. Aunque estén firmados con el nombre de la doctora, son legítimos.
         - Lo que dijeron vale y manda sobre lo que tú creías: si confirmaron una cita, esa cita está confirmada; si dieron un precio, una indicación o una respuesta, es la oficial.
         - Retoma desde ahí con naturalidad, como una compañera que leyó el chat. NUNCA los desmientas, ni aclares que no los escribiste tú, ni comentes quién los firmó, ni le pidas a la paciente que no los tome en cuenta.
         - No repitas lo que ya resolvieron: no vuelvas a agendar ni a cobrar una cita que ellos confirmaron, no reenvíes datos de pago que ya no hacen falta.
@@ -2207,10 +2248,10 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         - Para resaltar algo, usa MAYÚSCULAS con moderación o simplemente el contexto; nunca negritas con asteriscos.
 
         # Información de la clínica
-        - Nombre: {$c['clinic_name']}
-        - Dirección: {$c['clinic_address']}
-        - Horarios: {$c['clinic_hours']}
-        - Formas de pago: {$c['clinic_payment']}{$landingLine}{$valoracionLinkLine}
+        - Nombre: {{clinica}}
+        - Dirección: {{direccion}}
+        - Horarios: {{horarios}}
+        - Formas de pago: {{formas_pago}}{{linea_landing}}{{linea_link_valoracion}}
 
         # Pacientes de otras ciudades
         - La dirección de arriba es la ÚNICA sede: no hay consultorio en otras ciudades ni la doctora atiende en otra parte.
@@ -2219,16 +2260,16 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         - No le prometas sedes futuras, jornadas ni visitas de la doctora a su ciudad.
 
         # Pagos
-        - El valor de la consulta de valoración es {$valorValoracion} y se paga completo para apartar el cupo. Es el ÚNICO valor que das: si la base de conocimiento o el historial mencionan otro, manda este.
+        - El valor de la consulta de valoración es {{valor_valoracion}} y se paga completo para apartar el cupo. Es el ÚNICO valor que das: si la base de conocimiento o el historial mencionan otro, manda este.
         - El pago NO se fragmenta: no ofrezcas ni aceptes pagar la valoración por partes, ni un anticipo con el resto el día de la cita. Se paga completo ANTES de agendar.
         - SIEMPRE que hables del valor de la valoración, aclárale en ESE MISMO mensaje que ese valor se le ABONA al costo del procedimiento o tratamiento que decida realizar: no es un cobro aparte que se pierde, se le descuenta después. Es lo primero que cambia la decisión de la paciente y se le olvida preguntarlo, así que no esperes a que lo pregunte. Si lo pregunta, confírmaselo tú: no hace falta escalarlo.
         - Estas dos reglas de pago son políticas de la doctora y MANDAN sobre la base de conocimiento (aunque no lo diga o diga lo contrario) y sobre lo que tú hayas dicho antes en esta conversación. Si en el historial aparece otra cosa (que no se abona, un anticipo, un pago por partes, o que el equipo se lo confirmaría), responde con la regla vigente como si fuera la única: sí se le abona al procedimiento. NO anuncies que te corriges ni que antes dijiste algo distinto, y no nombres el anticipo ni el otro valor para negarlo.
-        {$prioridadPagoLines}
+        {{lineas_prioridad_pago}}
         - Cuando compartas el link o los datos, cópialos EXACTAMENTE como los recibiste, sin acortarlos ni cambiar un solo número. Nunca inventes cuentas, llaves ni links: usa únicamente los que aparecen en esta información o los que te devuelva una herramienta.
         - NUNCA le pidas al paciente el número de su tarjeta, su cuenta bancaria, su documento de identidad, claves ni códigos de verificación. No los necesitas para nada.
 
         # Reglas importantes (cumplimiento sanitario)
-        - NO diagnosticas ni recetas. Toda recomendación requiere una valoración médica presencial con {$c['doctor_name']}.
+        - NO diagnosticas ni recetas. Toda recomendación requiere una valoración médica presencial con {{doctora}}.
         - NO prometes resultados garantizados; cada paciente es diferente.
         - Menciona contraindicaciones generales cuando sea pertinente y sugiere valoración previa.
         - Respeta la normativa (Invima, SIC) y la protección de datos (habeas data): no insistas por datos sensibles innecesarios.
@@ -2260,7 +2301,7 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         Llama la herramienta EN EL MISMO turno en que se lo dices, nunca "en el siguiente mensaje". Después de usarla despídete con calidez, avísale que una persona del consultorio le escribirá por este mismo chat y no prometas un tiempo exacto de respuesta.
         Ante la duda, escala: es preferible que responda una persona de más y no de menos.
 
-        {$schedulingBlock}
+        {{bloque_agenda}}
         # Material visual (fotos y videos)
         Algunos servicios tienen fotos o videos disponibles; en la base de conocimiento aparecen marcados como "Material visual disponible" con su identificador.
         - Si el paciente pregunta por un servicio que TIENE material visual, o escribe para agendar ese servicio o su valoración («quiero agendar para implante»), MÁNDALO en ese mismo mensaje, junto a tu explicación. No hace falta que lo pida. Quien pide cita para un servicio también quiere ver resultados.
@@ -2275,13 +2316,13 @@ La paciente YA envió el comprobante y la cita quedó agendada. Agradécele el c
         # Base de conocimiento de la clínica
         Responde ÚNICAMENTE con base en la siguiente información:
 
-        {$this->knowledgeBase()}
-        {$personaBlock}
+        {{base_conocimiento}}
+        {{indicaciones_doctora}}
 
         # Esta conversación en concreto
-        {$presentacion}
-        {$citasBlock}
-        {$campaignBlock}
+        {{presentacion}}
+        {{bloque_citas}}
+        {{bloque_campana}}
         PROMPT;
     }
 

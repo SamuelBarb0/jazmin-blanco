@@ -47,6 +47,22 @@ class Settings
         Setting::query()->updateOrCreate(['key' => $key], ['value' => $value]);
     }
 
+    /**
+     * Plantilla del system prompt escrita por la doctora desde el panel.
+     * Null = usar la plantilla por defecto del código (BotService).
+     */
+    public static function botPromptOverride(): ?string
+    {
+        $v = self::get('bot_prompt_override');
+
+        return filled($v) ? $v : null;
+    }
+
+    public static function setBotPromptOverride(?string $template): void
+    {
+        self::put('bot_prompt_override', filled($template) ? $template : null);
+    }
+
     public static function anthropicKey(): ?string
     {
         $stored = self::get(self::KEY_ANTHROPIC);

@@ -7,6 +7,7 @@ use App\Http\Controllers\Settings\GoogleCalendarSettingsController;
 use App\Http\Controllers\Settings\PasswordController;
 use App\Http\Controllers\Settings\PaymentSettingsController;
 use App\Http\Controllers\Settings\ProfileController;
+use App\Http\Controllers\Settings\PromptController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -28,6 +29,12 @@ Route::middleware('auth')->group(function () {
     Route::get('settings/agenda', [AgendaController::class, 'index'])->name('agenda.index');
     Route::post('settings/agenda', [AgendaController::class, 'store'])->name('agenda.store');
     Route::delete('settings/agenda/{fecha}', [AgendaController::class, 'destroy'])->name('agenda.destroy');
+
+    // Instrucciones de Lore (system prompt). Solo la dueña (validado en el
+    // controlador): cambiarlas altera el comportamiento con todas las pacientes.
+    Route::get('settings/prompt', [PromptController::class, 'edit'])->name('prompt.edit');
+    Route::put('settings/prompt', [PromptController::class, 'update'])->name('prompt.update');
+    Route::delete('settings/prompt', [PromptController::class, 'reset'])->name('prompt.reset');
 
     Route::get('settings/equipo', [EquipoController::class, 'index'])->name('equipo.index');
     Route::post('settings/equipo', [EquipoController::class, 'store'])->name('equipo.store');
