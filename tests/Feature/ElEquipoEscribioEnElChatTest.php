@@ -116,6 +116,21 @@ class ElEquipoEscribioEnElChatTest extends TestCase
         $this->assertStringContainsString('NUNCA los desmientas', $prompt);
     }
 
+    /**
+     * 28/10/2026: la doctora reportó que, tras ajustar un precio y una promoción,
+     * Lore se «corregía» en voz alta ante la paciente («tengo que corregir algunos
+     * datos que te di antes», «no tengo una promoción de $1.500.000»). El prompt
+     * debe prohibir anunciar correcciones y nombrar promos/anticipos ya muertos.
+     */
+    public function test_el_prompt_prohibe_anunciar_correcciones(): void
+    {
+        $prompt = BotService::fromUser($this->doctora)->systemPrompt();
+
+        $this->assertStringContainsString('Si la información cambió desde antes en el chat', $prompt);
+        $this->assertStringContainsString('No la presentes como una corrección', $prompt);
+        $this->assertStringContainsString('que ya no existe para aclarar que ya no lo tienes', $prompt);
+    }
+
     public function test_si_imita_la_marca_no_le_llega_a_la_paciente(): void
     {
         $this->loreDice(BotService::MARCA_EQUIPO."\n¡Con gusto, Lucy! 💙");
