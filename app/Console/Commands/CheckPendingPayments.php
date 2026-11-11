@@ -228,7 +228,8 @@ class CheckPendingPayments extends Command
      */
     private function avisar(PaymentLink $link, string $cuando): void
     {
-        $telefono = $link->booking['telefono'] ?? $link->lead?->phone;
+        // Con indicativo: guardado a diez dígitos, Meta lo leía como otro país.
+        $telefono = Settings::phoneWithCountryCode($link->booking['telefono'] ?? $link->lead?->phone);
 
         if (blank($telefono)) {
             return;

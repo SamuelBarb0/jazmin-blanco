@@ -409,9 +409,17 @@ class InboxController extends Controller
             return $this->deVuelta($conversation)->with('error', 'Escribe un mensaje o adjunta un archivo.');
         }
 
-        $telefono = $conversation->lead?->phone;
-        if (blank($telefono)) {
+        if (blank($conversation->lead?->phone)) {
             return $this->deVuelta($conversation)->with('error', 'Esta paciente no tiene teléfono registrado, no se le puede escribir.');
+        }
+
+        // Con indicativo, igual que los recordatorios. Un número guardado a diez
+        // dígitos desde la agenda («321 4789448») salía tal cual: Meta lo leía
+        // como +32 (Bélgica), lo aceptaba y lo rebotaba con 131026, y en pantalla
+        // el mensaje parecía enviado.
+        $telefono = Settings::phoneWithCountryCode($conversation->lead->phone);
+        if (! $telefono) {
+            return $this->deVuelta($conversation)->with('error', 'El teléfono guardado de esta paciente no es válido ('.$conversation->lead->phone.'). Corrígelo en su ficha para poder escribirle.');
         }
 
         if (! $conversation->windowIsOpen()) {

@@ -113,11 +113,12 @@ class FollowUpTransferRequests extends Command
     private function escribir(WhatsAppService $whatsapp, TransferRequest $solicitud, string $texto, bool $dry, string $tipo): bool
     {
         $conversacion = $solicitud->conversation;
-        $telefono = $conversacion?->lead?->phone;
+        // Con indicativo: guardado a diez dígitos, Meta lo leía como otro país.
+        $telefono = Settings::phoneWithCountryCode($conversacion?->lead?->phone);
         $quien = $conversacion?->lead?->name ?: '—';
 
         if (blank($telefono)) {
-            $this->line("  <fg=gray>sin teléfono</> {$quien}");
+            $this->line("  <fg=gray>sin teléfono válido</> {$quien}");
 
             return false;
         }

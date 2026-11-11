@@ -134,13 +134,23 @@ class PatientLeads
             }
         }
 
-        if (blank($name)) {
+        if (blank($name) || self::isNonPatient($name)) {
             return null;
         }
 
         // Con nombre, prefiere al lead que todavía no tiene teléfono: suele ser
         // el importado del calendario, que es justo el que queremos completar.
         $porNombre = $pool->filter(fn (Lead $l) => self::sameName($l->name, $name));
+
+        // Si SÍ tenemos teléfono y no coincidió con nadie, es otra persona: el
+        // nombre solo sirve para completar a un paciente que aún no tiene número.
+        // Antes caía en cualquier homónimo, y por WhatsApp eso juntaba en un solo
+        // chat a todos los que se llaman «Juan» o tienen «.» de nombre de perfil:
+        // la doctora contestaba ahí y el mensaje salía al teléfono del primero
+        // (Meta lo rechazaba con 131047, o peor, le llegaba a otra paciente).
+        if (strlen($digits) >= 7) {
+            return $porNombre->firstWhere(fn (Lead $l) => blank($l->phone));
+        }
 
         return $porNombre->firstWhere(fn (Lead $l) => blank($l->phone)) ?? $porNombre->first();
     }
